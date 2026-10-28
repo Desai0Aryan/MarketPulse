@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: marketpulse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marketpulse}
+      POSTGRES_DB: marketpulse
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketpulse -d marketpulse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      MP_DATA_PROVIDER: ${MP_DATA_PROVIDER:-mock}
+      MP_DATABASE_URL: postgresql+psycopg://marketpulse:${POSTGRES_PASSWORD:-marketpulse}@db:5432/marketpulse
+      MP_CORS_ORIGINS: '["http://localhost:3000"]'
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  frontend:
+    build: ./frontend
+    environment:
+      API_INTERNAL_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
