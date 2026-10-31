@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronsLeft, X } from "lucide-react";
 import { BRAND_ICON, NAV } from "@/lib/nav";
-import { progress } from "@/lib/roadmap";
+import { ROADMAP, progress } from "@/lib/roadmap";
 import { cn } from "@/lib/utils";
 import { useUI } from "@/stores/ui";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -48,7 +48,7 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose:
               <ul className="space-y-0.5">
                 {NAV.filter((n) => n.group === g).map((n) => {
                   const active = pathname === n.href || pathname.startsWith(`${n.href}/`);
-                  const planned = n.part > prog.done;
+                  const planned = !ROADMAP.find((r) => r.id === n.part)?.done;
                   return (
                     <li key={n.href}>
                       <Link

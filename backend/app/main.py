@@ -9,9 +9,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import market, stocks
+from app.api.v1 import market, pipeline, stocks
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.services import container
 
 log = logging.getLogger("marketpulse")
 
@@ -20,7 +21,12 @@ log = logging.getLogger("marketpulse")
 async def lifespan(_: FastAPI):
     s = get_settings()
     configure_logging(s.log_level)
-    log.info("starting", extra={"path": f"provider={s.data_provider}"})
+    log.info("starting", extra={"path": f"provider={s.data_provider} storage={s.storage}"})
+    if s.auto_seed and s.is_demo:
+        repo = container.get_repo()
+        if not repo.bar_counts() or all(n == 0 for n, _, _ in repo.bar_counts().values()):
+            run = container.get_ingestion().run("backfill", trigger="startup")
+            log.info("demo seed finished", extra={"path": f"run={run.id} status={run.status}"})
     yield
     log.info("shutdown complete")
 
@@ -56,11 +62,14 @@ def create_app() -> FastAPI:
 
     @app.get("/ready", tags=["ops"])
     def ready():
-        # Part 2 adds a real database check here.
-        return {"status": "ready", "checks": {"provider": "ok"}}
+        repo = container.get_repo()
+        checks = {"database": "ok" if repo.ping() else "down", "provider": "ok" if container.get_provider().ping() else "down"}
+        ok = all(v == "ok" for v in checks.values())
+        return JSONResponse(status_code=200 if ok else 503, content={"status": "ready" if ok else "not_ready", "checks": checks})
 
     app.include_router(stocks.router, prefix="/api/v1")
     app.include_router(market.router, prefix="/api/v1")
+    app.include_router(pipeline.router, prefix="/api/v1")
     return app
 
 

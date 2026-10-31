@@ -8,7 +8,7 @@ export interface RoadmapPart {
 /** Build roadmap shown in the UI. Update `done` as each part ships. */
 export const ROADMAP: RoadmapPart[] = [
   { id: 1, title: "Foundation & UI shell", summary: "Design system, dashboard, mock provider, API, Docker", done: true },
-  { id: 2, title: "Data pipeline", summary: "Ingestion, validation, indicators, PostgreSQL schema", done: false },
+  { id: 2, title: "Data pipeline", summary: "Ingestion, validation, indicators, PostgreSQL schema", done: true },
   { id: 3, title: "Stock terminal", summary: "Candlesticks, technicals, search, persistent watchlists", done: false },
   { id: 4, title: "Screener & compare", summary: "Filters, correlation matrix, CSV export", done: false },
   { id: 5, title: "Portfolio & alerts", summary: "Paper trading accounting, alert engine", done: false },

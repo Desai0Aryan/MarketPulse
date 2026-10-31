@@ -15,22 +15,43 @@ services:
       timeout: 3s
       retries: 10
 
-  backend:
+  migrate:
     build: ./backend
-    environment:
+    command: ["alembic", "upgrade", "head"]
+    environment: &backend-env
       MP_DATA_PROVIDER: ${MP_DATA_PROVIDER:-mock}
+      MP_STORAGE: postgres
       MP_DATABASE_URL: postgresql+psycopg://marketpulse:${POSTGRES_PASSWORD:-marketpulse}@db:5432/marketpulse
       MP_CORS_ORIGINS: '["http://localhost:3000"]'
+      MP_ADMIN_TOKEN: ${MP_ADMIN_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy
+
+  backend:
+    build: ./backend
+    environment: *backend-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
       interval: 10s
       timeout: 3s
-      retries: 6
+      retries: 12
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.cli", "worker"]
+    environment:
+      <<: *backend-env
+      MP_AUTO_SEED: "false"
+    depends_on:
+      backend:
+        condition: service_healthy
+    stop_grace_period: 30s
 
   frontend:
     build: ./frontend

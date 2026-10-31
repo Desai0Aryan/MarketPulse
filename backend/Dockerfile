@@ -8,6 +8,8 @@ RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.30" "pydan
     "pydantic-settings>=2.4" "numpy>=1.26" "httpx>=0.27" "sqlalchemy>=2.0" "alembic>=1.13" "psycopg[binary]>=3.2"
 
 COPY app ./app
+COPY alembic.ini ./
+COPY migrations ./migrations
 
 RUN useradd --create-home appuser
 USER appuser

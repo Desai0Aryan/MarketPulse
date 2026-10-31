@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     demo_history_days: int = 1300  # ~5 years of sessions
 
     database_url: str = "postgresql+psycopg://marketpulse:marketpulse@localhost:5432/marketpulse"
+    # "memory" needs no database (data resets on restart); "postgres" persists via SQLAlchemy.
+    storage: str = "memory"
+    auto_seed: bool = True  # on startup, backfill if the store is empty (demo provider only)
+
+    # Operational endpoints (manual ingest/backfill). If set, requests need header X-Admin-Token.
+    # If unset, they are allowed only when environment == "development".
+    admin_token: str | None = None
+    ingest_interval_minutes: int = 60  # worker schedule
 
     @property
     def is_demo(self) -> bool:

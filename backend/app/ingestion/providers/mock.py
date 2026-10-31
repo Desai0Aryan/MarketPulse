@@ -92,6 +92,9 @@ class MockProvider(MarketDataProvider):
         self.anchor = anchor
         self.history_days = history_days
 
+    def reference_day(self) -> date:
+        return self.anchor
+
     def instruments(self) -> list[Instrument]:
         return [
             Instrument(r[0], r[1], r[2], "USD", r[3], r[4]) for r in _UNIVERSE

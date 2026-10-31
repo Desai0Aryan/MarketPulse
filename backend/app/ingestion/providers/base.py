@@ -39,3 +39,14 @@ class MarketDataProvider(ABC):
 
     @abstractmethod
     def history(self, symbol: str, start: date | None = None, end: date | None = None) -> list[Bar]: ...
+
+    def reference_day(self) -> date:
+        """The 'today' used to judge data freshness. Real providers use the real date."""
+        return date.today()
+
+    def ping(self) -> bool:
+        """Cheap connectivity check used by the pipeline monitor."""
+        try:
+            return len(self.instruments()) > 0
+        except Exception:
+            return False

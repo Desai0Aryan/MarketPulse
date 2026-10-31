@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1.stocks import _meta
-from app.services import market
+from app.services import container, market
 
 router = APIRouter(tags=["market"])
 
@@ -18,10 +18,12 @@ INDEX_LABELS = {
 @router.get("/market/overview")
 def overview():
     """Indexes + breadth + movers, all computed from the tracked universe."""
-    provider = market.get_provider()
     indexes, equities = [], []
-    for inst in provider.instruments():
-        q = market.quote(provider.history(inst.symbol))
+    for inst in container.get_repo().get_instruments():
+        bars = market.stored_bars(inst.symbol)
+        if len(bars) < 2:
+            continue
+        q = market.quote(bars)
         row = {"symbol": inst.symbol, "name": inst.name, **q}
         if inst.kind == "index_proxy":
             indexes.append({**row, "label": INDEX_LABELS.get(inst.symbol, inst.name), "is_proxy": True})

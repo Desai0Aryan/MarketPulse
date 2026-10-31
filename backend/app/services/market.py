@@ -1,21 +1,21 @@
+"""Read-side market helpers. Prices come from the repository (what the pipeline stored)."""
+
 from __future__ import annotations
 
 from datetime import date, timedelta
-from functools import lru_cache
 
-from app.core.config import get_settings
 from app.ingestion.providers.base import Bar, MarketDataProvider
-from app.ingestion.providers.mock import MockProvider
+from app.services import container
 
 RANGE_DAYS = {"1W": 7, "1M": 31, "3M": 92, "6M": 183, "1Y": 366, "5Y": 1830, "MAX": 100000}
 
 
-@lru_cache
 def get_provider() -> MarketDataProvider:
-    s = get_settings()
-    if s.data_provider == "mock":
-        return MockProvider(s.demo_anchor_date, s.demo_history_days)
-    raise RuntimeError(f"Unsupported data provider: {s.data_provider}")
+    return container.get_provider()
+
+
+def stored_bars(symbol: str, start: date | None = None, end: date | None = None) -> list[Bar]:
+    return container.get_repo().get_bars(symbol, start, end)
 
 
 def window(bars: list[Bar], range_key: str) -> list[Bar]:
@@ -29,7 +29,8 @@ def quote(bars: list[Bar]) -> dict:
     last, prev = bars[-1], bars[-2]
     change = last.close - prev.close
     last52 = [b for b in bars if b.day >= last.day - timedelta(days=365)]
-    avg_vol = sum(b.volume for b in bars[-31:-1]) / max(len(bars[-31:-1]), 1)
+    recent = bars[-31:-1]
+    avg_vol = sum(b.volume for b in recent) / max(len(recent), 1)
     return {
         "price": last.close,
         "prev_close": prev.close,
@@ -46,7 +47,3 @@ def quote(bars: list[Bar]) -> dict:
         "as_of": last.day,
         "sparkline": [b.close for b in bars[-30:]],
     }
-
-
-def parse_day(value: str | None) -> date | None:
-    return date.fromisoformat(value) if value else None
