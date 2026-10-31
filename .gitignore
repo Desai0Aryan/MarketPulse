@@ -9,3 +9,8 @@ node_modules/
 out/
 *.tsbuildinfo
 .DS_Store
+
+# macOS metadata
+.DS_Store
+._*
+
