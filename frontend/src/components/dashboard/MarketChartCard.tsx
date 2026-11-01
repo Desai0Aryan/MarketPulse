@@ -22,8 +22,8 @@ const MODES: { id: ChartMode; label: string; icon: typeof LineChart }[] = [
 ];
 
 export function ChartControls({
-  range, onRange, mode, onMode, sma, onSma,
-}: { range: RangeKey; onRange: (r: RangeKey) => void; mode: ChartMode; onMode: (m: ChartMode) => void; sma: boolean; onSma: (v: boolean) => void }) {
+  range, onRange, mode, onMode, sma, onSma, hideSma = false,
+}: { range: RangeKey; onRange: (r: RangeKey) => void; mode: ChartMode; onMode: (m: ChartMode) => void; sma: boolean; onSma: (v: boolean) => void; hideSma?: boolean }) {
   const seg = "flex rounded-lg border border-border bg-bg/60 p-0.5";
   const item = (on: boolean) => cn("rounded-md px-2.5 py-1 text-xs font-medium transition-colors", on ? "bg-accent text-white" : "text-muted hover:text-fg");
   return (
@@ -40,9 +40,11 @@ export function ChartControls({
           </button>
         ))}
       </div>
-      <button onClick={() => onSma(!sma)} aria-pressed={sma} className={cn(seg, "px-3 py-1.5 text-xs font-medium", sma ? "border-accent/60 text-accent" : "text-muted hover:text-fg")}>
-        SMA 20/50
-      </button>
+      {!hideSma && (
+        <button onClick={() => onSma(!sma)} aria-pressed={sma} className={cn(seg, "px-3 py-1.5 text-xs font-medium", sma ? "border-accent/60 text-accent" : "text-muted hover:text-fg")}>
+          SMA 20/50
+        </button>
+      )}
     </div>
   );
 }

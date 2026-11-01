@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { BreadthCard, IndexCards, MoversCard, RoadmapCard, WatchlistPanel } from "@/components/dashboard/Panels";
 import { MarketChartCard } from "@/components/dashboard/MarketChartCard";
@@ -9,6 +9,7 @@ import { ErrorState, PageHeader, Skeleton } from "@/components/ui/primitives";
 import { api } from "@/lib/api";
 
 export default function DashboardPage() {
+  const queryClient = useQueryClient();
   const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview });
   const stocks = useQuery({ queryKey: ["stocks"], queryFn: api.stocks });
   const o = overview.data;
@@ -25,7 +26,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3">
             <DataBadge meta={o?.meta} asOf={o?.indexes[0]?.as_of} />
             <button
-              onClick={() => { overview.refetch(); stocks.refetch(); }}
+              onClick={() => { overview.refetch(); stocks.refetch(); queryClient.invalidateQueries({ queryKey: ["watchlists"] }); }}
               aria-label="Refresh data"
               className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-surface text-muted hover:border-accent/50 hover:text-fg"
             >
@@ -52,7 +53,7 @@ export default function DashboardPage() {
             <div className="xl:col-span-2">
               {chartSymbols.length > 0 ? <MarketChartCard symbols={chartSymbols} labels={labels} /> : <Skeleton className="h-[460px]" />}
             </div>
-            {stocks.isLoading ? <Skeleton className="h-[460px]" /> : <WatchlistPanel all={all} />}
+            <WatchlistPanel />
           </div>
 
           {o && (

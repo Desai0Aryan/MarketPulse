@@ -131,3 +131,77 @@ export interface QualityReport {
   ingestion_failures: number;
   missing_values: string;
 }
+
+export interface WatchlistItem {
+  symbol: string;
+  name: string;
+  exchange: string | null;
+  has_data: boolean;
+  price?: number;
+  change?: number;
+  change_pct?: number;
+  sparkline?: number[];
+  as_of?: string;
+}
+
+export interface Watchlist {
+  id: number;
+  name: string;
+  is_default: boolean;
+  symbols: string[];
+  items: WatchlistItem[];
+}
+
+export interface SearchItem {
+  symbol: string;
+  name: string;
+  exchange: string;
+  kind: "equity" | "index_proxy";
+  match: string;
+}
+
+export type Nums = (number | null)[];
+
+export interface Technicals {
+  meta: ApiMeta;
+  symbol: string;
+  days: string[];
+  parameters: { sma: number[]; ema: number[]; rsi: number; macd: number[]; bollinger: number[]; atr: number };
+  sma: Record<string, Nums>;
+  ema: Record<string, Nums>;
+  rsi: Nums;
+  macd: { line: Nums; signal: Nums; hist: Nums };
+  bollinger: { lower: Nums; mid: Nums; upper: Nums };
+  atr: Nums;
+  formulas: Record<string, string>;
+  disclaimer: string;
+  price_basis: string;
+}
+
+export interface TechParams {
+  sma: string;
+  ema: string;
+  rsi: number;
+  macd: string;
+  bb_window: number;
+  bb_k: number;
+}
+
+export interface ReturnsResponse {
+  meta: ApiMeta;
+  symbol: string;
+  range: string;
+  price_basis: string;
+  conventions: string;
+  stats: {
+    sessions: number;
+    total_return: number | null;
+    annualized_return: number | null;
+    annualized_volatility: number | null;
+    max_drawdown: number | null;
+    best_day: { day: string; return: number | null } | null;
+    worst_day: { day: string; return: number | null } | null;
+    notes: string[];
+  };
+  series: { days: string[]; daily_return: Nums; cumulative_return: Nums; drawdown: Nums };
+}

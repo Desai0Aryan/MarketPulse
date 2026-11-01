@@ -4,9 +4,11 @@ from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 
 from app.core.config import get_settings
-from app.services import container, market
+from app.analytics import stats as astats
+from app.services import container, export, market, technicals
 
 router = APIRouter(tags=["stocks"])
 
@@ -109,3 +111,78 @@ def indicators(
         "count": len(rows),
         "rows": [{**r, "day": r["day"].isoformat()} for r in rows],
     }
+
+
+def _window_start(bars, range_key: str) -> int:
+    """Index of the first bar inside the requested range."""
+    w = market.window(bars, range_key)
+    return len(bars) - len(w)
+
+
+@router.get("/stocks/{symbol}/returns")
+def returns(symbol: str, range: Literal["1M", "3M", "6M", "1Y", "5Y", "MAX"] = "1Y"):
+    bars = market.window(_bars_or_404(symbol), range)
+    days, adj = [b.day for b in bars], [b.adj_close for b in bars]
+    return {
+        "meta": _meta(),
+        "symbol": symbol.upper(),
+        "range": range,
+        "price_basis": "adj_close",
+        "conventions": "Simple close-to-close returns; volatility annualised with 252 sessions/year; max drawdown is peak-to-trough on adjusted close.",
+        "stats": astats.window_stats(days, adj),
+        "series": astats.series(days, adj),
+    }
+
+
+@router.get("/stocks/{symbol}/technicals")
+def technicals_endpoint(
+    symbol: str,
+    range: Literal["1W", "1M", "3M", "6M", "1Y", "5Y", "MAX"] = "6M",
+    sma: str = "20,50,200",
+    ema: str = "12,26",
+    rsi: int = 14,
+    macd: str = "12,26,9",
+    bb_window: int = 20,
+    bb_k: float = 2.0,
+    atr: int = 14,
+):
+    """Indicators with user-adjustable parameters, computed from stored bars (warm-up uses full history)."""
+    bars = _bars_or_404(symbol)
+    try:
+        macd_p = technicals.parse_int_list(macd, "macd", 2, 200, max_items=3)
+        if len(macd_p) != 3:
+            raise technicals.ParamError("macd needs exactly three values: fast,slow,signal")
+        result = technicals.compute_technicals(
+            bars,
+            _window_start(bars, range),
+            technicals.parse_int_list(sma, "sma", 2, 400),
+            technicals.parse_int_list(ema, "ema", 2, 400),
+            rsi,
+            (macd_p[0], macd_p[1], macd_p[2]),
+            bb_window,
+            bb_k,
+            atr,
+        )
+    except technicals.ParamError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return {"meta": _meta(), "symbol": symbol.upper(), "range": range, **result}
+
+
+@router.get("/stocks/{symbol}/prices.csv")
+def prices_csv(symbol: str, range: Literal["1W", "1M", "3M", "6M", "1Y", "5Y", "MAX"] = "1Y"):
+    bars = market.window(_bars_or_404(symbol), range)[-5000:]  # bounded export
+    meta = _meta()
+    body = export.build_csv(
+        ["date", "open", "high", "low", "close", "adj_close", "volume"],
+        [(b.day.isoformat(), b.open, b.high, b.low, b.close, b.adj_close, b.volume) for b in bars],
+        {
+            "MarketPulse export": "daily OHLCV",
+            "symbol": symbol.upper(),
+            "source": f"{meta['provider']} ({meta['data_class']})",
+            "notice": meta["notice"] or "",
+            "price_basis": "OHLC unadjusted; adj_close adjusted",
+            "range": f"{bars[0].day} to {bars[-1].day}, {len(bars)} rows",
+        },
+    )
+    name = export.filename(symbol.upper(), "prices", range, bars[-1].day)
+    return Response(body, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{name}"'})

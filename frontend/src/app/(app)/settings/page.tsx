@@ -9,7 +9,7 @@ import { useUI } from "@/stores/ui";
 
 export default function SettingsPage() {
   const hydrated = useHydrated();
-  const { theme, setTheme, chartRange, setChartRange, sidebarCollapsed, toggleSidebar, favorites, reset } = useUI();
+  const { theme, setTheme, chartRange, setChartRange, sidebarCollapsed, toggleSidebar, reset } = useUI();
   const seg = (on: boolean) => cn("flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors", on ? "border-accent bg-accent/10 text-fg" : "border-border text-muted hover:text-fg");
   if (!hydrated) return <PageHeader title="Settings" />;
 
@@ -42,7 +42,7 @@ export default function SettingsPage() {
           </div>
         </Card>
         <Card>
-          <CardHeader title="Saved data" subtitle={`${favorites.length} favorite symbols stored locally`} />
+          <CardHeader title="Saved preferences" subtitle="Theme, chart range and layout stored in this browser. Watchlists are stored by the server." />
           <div className="px-4 pb-4">
             <button onClick={reset} className="rounded-lg border border-down/40 px-3 py-2 text-sm font-medium text-down hover:bg-down/10">Reset all preferences</button>
           </div>

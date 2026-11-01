@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (
-    BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, func,
+    BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -104,3 +104,20 @@ class RejectedRecordRow(Base):
     raw: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (Index("ix_rejected_run", "run_id"), Index("ix_rejected_symbol_day", "symbol", "day"))
+
+
+class WatchlistRow(Base):
+    __tablename__ = "watchlists"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner: Mapped[str] = mapped_column(String(64), nullable=False)  # demo profile now; user id after auth
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint("owner", "name", name="uq_watchlists_owner_name"), Index("ix_watchlists_owner", "owner"))
+
+
+class WatchlistItemRow(Base):
+    __tablename__ = "watchlist_items"
+    watchlist_id: Mapped[int] = mapped_column(ForeignKey("watchlists.id", ondelete="CASCADE"), primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id", ondelete="CASCADE"), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)

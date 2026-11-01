@@ -30,3 +30,7 @@ SELECT instrument_id, max(day) FROM prices GROUP BY instrument_id;
 
 ## Migrations
 `cd backend && alembic upgrade head` (docker-compose runs this in the `migrate` service before the API starts). Migration `0001` is hand-written to match `app/database/models.py`; `tests/test_sql_repo.py` applies it and exercises the repository.
+
+## Part 3 tables
+
+`watchlists(id, owner, name, is_default)` — unique `(owner, name)`; a partial unique index (`uq_watchlists_one_default`) guarantees at most one default per owner at the database level. `watchlist_items(watchlist_id, instrument_id, position)` — composite PK, cascade delete with either parent. Every repository method filters by `owner`, so a foreign list id returns "not found" exactly like a missing one (no existence leak). Migration `0002`.

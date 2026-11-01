@@ -67,3 +67,28 @@ def test_db_rejects_invalid_ohlc_even_if_app_validation_is_bypassed(repo):
     with pytest.raises(IntegrityError):
         repo.upsert_bars("AAPL", [Bar(date(2026, 10, 1), 10, 5, 9, 10, 10, 1)], None)  # high < low
     assert repo.get_bars("AAPL") == []  # transaction rolled back
+
+
+def test_watchlists_on_postgres(repo):
+    import pytest as _pytest
+
+    from app.domain import ConflictError, NotFoundError
+    from app.ingestion.providers.mock import MockProvider
+
+    repo.upsert_instruments(MockProvider(date(2026, 10, 23), 10).instruments())
+    a = repo.create_watchlist("alice", "Tech")
+    b = repo.create_watchlist("alice", "Energy")
+    assert a.is_default and not b.is_default
+    with _pytest.raises(ConflictError):
+        repo.create_watchlist("alice", "Tech")
+    repo.add_watchlist_item("alice", a.id, "AAPL")
+    repo.add_watchlist_item("alice", a.id, "MSFT")
+    repo.add_watchlist_item("alice", a.id, "AAPL")  # idempotent
+    assert repo.reorder_watchlist("alice", a.id, ["MSFT", "AAPL"]).symbols == ["MSFT", "AAPL"]
+    repo.update_watchlist("alice", b.id, make_default=True)
+    assert [w.is_default for w in repo.list_watchlists("alice")] == [False, True]
+    with _pytest.raises(NotFoundError):  # another owner can neither see nor modify it
+        repo.add_watchlist_item("mallory", a.id, "TSLA")
+    assert repo.list_watchlists("mallory") == []
+    repo.delete_watchlist("alice", b.id)  # deleting the default promotes the remaining list
+    assert repo.list_watchlists("alice")[0].is_default

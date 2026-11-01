@@ -1,4 +1,4 @@
-import type { ApiMeta, Bar, MarketOverview, RangeKey, StockRow, Instrument, Quote, PipelineStatus, QualityReport, RunSummary, RunDetail } from "@/types/api";
+import type { ApiMeta, Bar, MarketOverview, RangeKey, StockRow, Instrument, Quote, PipelineStatus, QualityReport, RunSummary, RunDetail, Watchlist, SearchItem, Technicals, TechParams, ReturnsResponse } from "@/types/api";
 
 export class ApiError extends Error {
   constructor(
@@ -26,20 +26,36 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(detail || "Request failed", res.status);
   }
+  if (res.status === 204) return null as T;
   return (await res.json()) as T;
 }
 
 const get = <T,>(path: string) => request<T>(path);
 
-function post<T>(path: string, body: unknown, adminToken?: string) {
+function send<T>(method: string, path: string, body?: unknown, adminToken?: string) {
   return request<T>(path, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json", ...(adminToken ? { "X-Admin-Token": adminToken } : {}) },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
 
+const post = <T,>(path: string, body: unknown, adminToken?: string) => send<T>("POST", path, body, adminToken);
+
 export const api = {
+  watchlists: () => get<{ items: Watchlist[] }>("/watchlists"),
+  createWatchlist: (name: string) => post<Watchlist>("/watchlists", { name }),
+  updateWatchlist: (id: number, body: { name?: string; is_default?: boolean }) => send<Watchlist>("PATCH", `/watchlists/${id}`, body),
+  deleteWatchlist: (id: number) => request<null>(`/watchlists/${id}`, { method: "DELETE" }),
+  addWatchlistItem: (id: number, symbol: string) => post<Watchlist>(`/watchlists/${id}/items`, { symbol }),
+  removeWatchlistItem: (id: number, symbol: string) => send<Watchlist>("DELETE", `/watchlists/${id}/items/${symbol}`),
+  reorderWatchlist: (id: number, symbols: string[]) => send<Watchlist>("PUT", `/watchlists/${id}/order`, { symbols }),
+  search: (q: string) => get<{ items: SearchItem[] }>(`/search?q=${encodeURIComponent(q)}&limit=8`),
+  technicals: (symbol: string, range: string, p: TechParams) =>
+    get<Technicals>(
+      `/stocks/${symbol}/technicals?range=${range}&sma=${encodeURIComponent(p.sma)}&ema=${encodeURIComponent(p.ema)}&rsi=${p.rsi}&macd=${encodeURIComponent(p.macd)}&bb_window=${p.bb_window}&bb_k=${p.bb_k}`,
+    ),
+  returns: (symbol: string, range: string) => get<ReturnsResponse>(`/stocks/${symbol}/returns?range=${range}`),
   pipelineStatus: () => get<PipelineStatus>("/pipeline/status"),
   pipelineQuality: () => get<QualityReport>("/pipeline/quality"),
   pipelineRuns: (status?: string) =>

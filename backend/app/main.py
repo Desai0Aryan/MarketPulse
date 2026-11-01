@@ -9,10 +9,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import market, pipeline, stocks
+from app.api.v1 import market, pipeline, search, stocks, watchlists
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services import container
+from app.services.watchlists import ensure_default
 
 log = logging.getLogger("marketpulse")
 
@@ -27,6 +28,7 @@ async def lifespan(_: FastAPI):
         if not repo.bar_counts() or all(n == 0 for n, _, _ in repo.bar_counts().values()):
             run = container.get_ingestion().run("backfill", trigger="startup")
             log.info("demo seed finished", extra={"path": f"run={run.id} status={run.status}"})
+    ensure_default(container.get_repo())
     yield
     log.info("shutdown complete")
 
@@ -70,6 +72,8 @@ def create_app() -> FastAPI:
     app.include_router(stocks.router, prefix="/api/v1")
     app.include_router(market.router, prefix="/api/v1")
     app.include_router(pipeline.router, prefix="/api/v1")
+    app.include_router(search.router, prefix="/api/v1")
+    app.include_router(watchlists.router, prefix="/api/v1")
     return app
 
 

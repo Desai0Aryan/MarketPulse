@@ -9,14 +9,17 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import create_engine, delete, func, select, text
+from sqlalchemy import create_engine, delete, func, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database.models import (
-    CheckpointRow, IndicatorRow, IngestionRunRow, InstrumentRow, PriceRow, RejectedRecordRow,
+    CheckpointRow, IndicatorRow, IngestionRunRow, InstrumentRow, PriceRow, RejectedRecordRow, WatchlistItemRow, WatchlistRow,
 )
-from app.domain import Checkpoint, Rejection, RunRecord, UpsertResult, utcnow
+from app.domain import (
+    Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, UpsertResult, Watchlist, utcnow,
+)
 from app.ingestion.providers.base import Bar, Instrument
 
 _IND_COLS = (
@@ -260,3 +263,108 @@ class SqlRepository:
                 .group_by(InstrumentRow.symbol)
             ).all()
             return {sym: (n, lo, hi) for sym, n, lo, hi in rows}
+
+    # watchlists ------------------------------------------------------
+    MAX_LISTS = 20
+    MAX_ITEMS = 100
+
+    def _own(self, s: Session, owner: str, wl_id: int) -> WatchlistRow:
+        row = s.scalar(select(WatchlistRow).where(WatchlistRow.id == wl_id, WatchlistRow.owner == owner))
+        if row is None:  # identical error for missing and foreign lists
+            raise NotFoundError("Watchlist not found")
+        return row
+
+    def _symbols(self, s: Session, wl_id: int) -> list[str]:
+        return list(
+            s.scalars(
+                select(InstrumentRow.symbol)
+                .join(WatchlistItemRow, WatchlistItemRow.instrument_id == InstrumentRow.id)
+                .where(WatchlistItemRow.watchlist_id == wl_id)
+                .order_by(WatchlistItemRow.position)
+            )
+        )
+
+    def _wl(self, s: Session, row: WatchlistRow) -> Watchlist:
+        return Watchlist(row.id, row.owner, row.name, row.is_default, self._symbols(s, row.id))
+
+    def list_watchlists(self, owner: str) -> list[Watchlist]:
+        with self.session() as s:
+            rows = s.scalars(select(WatchlistRow).where(WatchlistRow.owner == owner).order_by(WatchlistRow.id)).all()
+            return [self._wl(s, r) for r in rows]
+
+    def create_watchlist(self, owner: str, name: str) -> Watchlist:
+        try:
+            with self.session() as s, s.begin():
+                n = s.scalar(select(func.count()).select_from(WatchlistRow).where(WatchlistRow.owner == owner)) or 0
+                if n >= self.MAX_LISTS:
+                    raise LimitError(f"At most {self.MAX_LISTS} watchlists")
+                row = WatchlistRow(owner=owner, name=name, is_default=(n == 0))
+                s.add(row)
+                s.flush()
+                return Watchlist(row.id, owner, name, row.is_default, [])
+        except IntegrityError:
+            raise ConflictError(f"A watchlist named '{name}' already exists") from None
+
+    def update_watchlist(self, owner: str, wl_id: int, name: str | None = None, make_default: bool = False) -> Watchlist:
+        try:
+            with self.session() as s, s.begin():
+                row = self._own(s, owner, wl_id)
+                if name is not None:
+                    row.name = name
+                if make_default:
+                    # clear first so the partial unique index never sees two defaults
+                    s.execute(update(WatchlistRow).where(WatchlistRow.owner == owner).values(is_default=False))
+                    s.flush()
+                    row.is_default = True
+                s.flush()
+                return self._wl(s, row)
+        except IntegrityError:
+            raise ConflictError(f"A watchlist named '{name}' already exists") from None
+
+    def delete_watchlist(self, owner: str, wl_id: int) -> None:
+        with self.session() as s, s.begin():
+            row = self._own(s, owner, wl_id)
+            was_default = row.is_default
+            s.delete(row)
+            s.flush()
+            if was_default:
+                nxt = s.scalar(select(WatchlistRow).where(WatchlistRow.owner == owner).order_by(WatchlistRow.id).limit(1))
+                if nxt:
+                    nxt.is_default = True
+
+    def add_watchlist_item(self, owner: str, wl_id: int, symbol: str) -> Watchlist:
+        with self.session() as s, s.begin():
+            row = self._own(s, owner, wl_id)
+            iid = s.scalar(select(InstrumentRow.id).where(InstrumentRow.symbol == symbol))
+            if iid is None:
+                raise NotFoundError(f"Unknown symbol '{symbol}'")
+            count = s.scalar(select(func.count()).select_from(WatchlistItemRow).where(WatchlistItemRow.watchlist_id == wl_id)) or 0
+            exists = s.scalar(select(WatchlistItemRow.instrument_id).where(WatchlistItemRow.watchlist_id == wl_id, WatchlistItemRow.instrument_id == iid))
+            if exists is None:  # idempotent
+                if count >= self.MAX_ITEMS:
+                    raise LimitError(f"At most {self.MAX_ITEMS} symbols per watchlist")
+                nxt = (s.scalar(select(func.max(WatchlistItemRow.position)).where(WatchlistItemRow.watchlist_id == wl_id)) or 0) + 1
+                s.add(WatchlistItemRow(watchlist_id=wl_id, instrument_id=iid, position=nxt))
+                s.flush()
+            return self._wl(s, row)
+
+    def remove_watchlist_item(self, owner: str, wl_id: int, symbol: str) -> Watchlist:
+        with self.session() as s, s.begin():
+            row = self._own(s, owner, wl_id)
+            iid = s.scalar(select(InstrumentRow.id).where(InstrumentRow.symbol == symbol))
+            res = s.execute(delete(WatchlistItemRow).where(WatchlistItemRow.watchlist_id == wl_id, WatchlistItemRow.instrument_id == iid))
+            if res.rowcount == 0:
+                raise NotFoundError(f"{symbol} is not in this watchlist")
+            s.flush()
+            return self._wl(s, row)
+
+    def reorder_watchlist(self, owner: str, wl_id: int, symbols: list[str]) -> Watchlist:
+        with self.session() as s, s.begin():
+            row = self._own(s, owner, wl_id)
+            if sorted(symbols) != sorted(self._symbols(s, wl_id)):
+                raise ConflictError("Order must contain exactly the symbols currently in the watchlist")
+            for pos, sym in enumerate(symbols, start=1):
+                iid = s.scalar(select(InstrumentRow.id).where(InstrumentRow.symbol == sym))
+                s.execute(update(WatchlistItemRow).where(WatchlistItemRow.watchlist_id == wl_id, WatchlistItemRow.instrument_id == iid).values(position=pos))
+            s.flush()
+            return self._wl(s, row)

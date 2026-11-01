@@ -110,3 +110,56 @@ def test_ops_disabled_in_production_without_token(monkeypatch):
         monkeypatch.delenv("MP_ENVIRONMENT")
         get_settings.cache_clear()
         container.reset_for_tests()
+
+
+# ---- Part 3 -----------------------------------------------------------------
+def test_search_endpoint(client):
+    r = client.get("/api/v1/search?q=nvd").json()
+    assert r["items"][0]["symbol"] == "NVDA"
+    assert client.get("/api/v1/search?q=zzzzz").json()["items"] == []
+    assert client.get("/api/v1/search?q=").status_code == 422
+
+
+def test_technicals_endpoint_and_param_validation(client):
+    r = client.get("/api/v1/stocks/AAPL/technicals?range=3M&rsi=7&bb_k=2.5").json()
+    assert r["parameters"]["rsi"] == 7 and len(r["rsi"]) == len(r["days"]) > 40
+    assert client.get("/api/v1/stocks/AAPL/technicals?rsi=1").status_code == 422
+    assert client.get("/api/v1/stocks/AAPL/technicals?macd=26,12,9").status_code == 422
+    assert client.get("/api/v1/stocks/AAPL/technicals?sma=abc").status_code == 422
+
+
+def test_returns_endpoint(client):
+    r = client.get("/api/v1/stocks/MSFT/returns?range=1Y").json()
+    assert r["stats"]["max_drawdown"] <= 0 and r["series"]["daily_return"][0] is None
+    assert client.get("/api/v1/stocks/NOPE/returns").status_code == 404
+
+
+def test_csv_export_headers_and_safety(client):
+    r = client.get("/api/v1/stocks/AAPL/prices.csv?range=1M")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    assert "attachment" in r.headers["content-disposition"] and "marketpulse_AAPL_prices_1M_2026-10-23.csv" in r.headers["content-disposition"]
+    lines = r.text.splitlines()
+    assert lines[0].startswith("# MarketPulse export") and any(l.startswith("date,open") for l in lines)
+    assert any("simulated" in l for l in lines[:6])
+
+
+def test_watchlist_lifecycle_over_http(client):
+    lists = client.get("/api/v1/watchlists").json()["items"]
+    assert len(lists) == 1 and lists[0]["is_default"] and lists[0]["symbols"][:2] == ["NVDA", "AAPL"]
+    assert all(i["has_data"] and i["price"] > 0 for i in lists[0]["items"])
+    new = client.post("/api/v1/watchlists", json={"name": "  Energy  "})
+    assert new.status_code == 201 and new.json()["name"] == "Energy"
+    wid = new.json()["id"]
+    assert client.post("/api/v1/watchlists", json={"name": "energy"}).status_code == 409
+    assert client.post("/api/v1/watchlists", json={"name": "   "}).status_code == 422
+    assert client.post(f"/api/v1/watchlists/{wid}/items", json={"symbol": "xom"}).json()["symbols"] == ["XOM"]
+    assert client.post(f"/api/v1/watchlists/{wid}/items", json={"symbol": "NOPE"}).status_code == 404
+    assert client.post(f"/api/v1/watchlists/{wid}/items", json={"symbol": "bad symbol!"}).status_code == 422
+    assert client.put(f"/api/v1/watchlists/{wid}/order", json={"symbols": ["AAPL"]}).status_code == 409
+    assert client.patch(f"/api/v1/watchlists/{wid}", json={"is_default": True}).json()["is_default"] is True
+    assert client.patch(f"/api/v1/watchlists/{wid}", json={"is_default": False}).status_code == 422
+    assert client.delete(f"/api/v1/watchlists/{wid}/items/XOM").json()["symbols"] == []
+    assert client.delete(f"/api/v1/watchlists/{wid}").status_code == 204
+    assert client.delete(f"/api/v1/watchlists/{wid}").status_code == 404
+    left = client.get("/api/v1/watchlists").json()["items"]
+    assert len(left) == 1 and left[0]["is_default"]

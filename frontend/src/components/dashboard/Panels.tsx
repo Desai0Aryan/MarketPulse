@@ -4,12 +4,11 @@ import { Star } from "lucide-react";
 import Link from "next/link";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { Change } from "@/components/shared/Change";
-import { Badge, Card, CardHeader, EmptyState, ProgressBar } from "@/components/ui/primitives";
+import { Badge, Card, CardHeader, EmptyState, ErrorState, ProgressBar, Skeleton } from "@/components/ui/primitives";
 import { ROADMAP, progress } from "@/lib/roadmap";
 import { cn, fmtDay, num, usd } from "@/lib/utils";
-import { useHydrated } from "@/hooks/useHydrated";
-import { useUI } from "@/stores/ui";
-import type { IndexRow, MarketOverview, MoverRow, StockRow } from "@/types/api";
+import { useDefaultWatchlist, useWatchlists } from "@/hooks/useWatchlists";
+import type { IndexRow, MarketOverview, MoverRow } from "@/types/api";
 
 export function IndexCards({ indexes }: { indexes: IndexRow[] }) {
   return (
@@ -43,45 +42,67 @@ export function IndexCards({ indexes }: { indexes: IndexRow[] }) {
 }
 
 export function FavoriteStar({ symbol }: { symbol: string }) {
-  const hydrated = useHydrated();
-  const fav = useUI((s) => s.favorites.includes(symbol));
-  const toggle = useUI((s) => s.toggleFavorite);
-  const on = hydrated && fav;
+  const { has, toggle, watchlist, isLoading } = useDefaultWatchlist();
+  const on = has(symbol);
+  const label = !watchlist
+    ? "Watchlist unavailable"
+    : on
+      ? `Remove ${symbol} from ${watchlist.name}`
+      : `Add ${symbol} to ${watchlist.name}`;
   return (
     <button
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggle(symbol); }}
-      aria-label={on ? `Remove ${symbol} from favorites` : `Add ${symbol} to favorites`}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggle.mutate({ symbol, remove: on });
+      }}
+      disabled={!watchlist || isLoading || toggle.isPending}
+      aria-label={label}
+      title={label}
       aria-pressed={on}
-      className="grid h-7 w-7 place-items-center rounded-md text-muted transition-colors hover:bg-elevated"
+      className="grid h-7 w-7 place-items-center rounded-md text-muted transition-colors hover:bg-elevated disabled:opacity-50"
     >
       <Star className={cn("h-4 w-4 transition-transform", on && "scale-110 fill-warn text-warn")} aria-hidden />
     </button>
   );
 }
 
-export function WatchlistPanel({ all }: { all: StockRow[] }) {
-  const hydrated = useHydrated();
-  const favorites = useUI((s) => s.favorites);
-  const rows = hydrated ? all.filter((s) => favorites.includes(s.symbol) && s.kind === "equity") : [];
+export function WatchlistPanel() {
+  const q = useWatchlists();
+  const wl = q.data?.items.find((w) => w.is_default) ?? q.data?.items[0];
   return (
     <Card className="flex h-full flex-col">
-      <CardHeader title="Watchlist" subtitle="Saved in this browser · account sync arrives in Part 3" />
-      {rows.length === 0 ? (
+      <CardHeader
+        title={wl ? wl.name : "Watchlist"}
+        subtitle="Your default watchlist"
+        action={<Link href="/watchlists" className="text-xs font-medium text-accent hover:underline">Manage</Link>}
+      />
+      {q.isError ? (
+        <div className="p-4"><ErrorState message={(q.error as Error).message} onRetry={() => q.refetch()} /></div>
+      ) : q.isLoading ? (
+        <div className="space-y-2 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
+      ) : !wl || wl.items.length === 0 ? (
         <EmptyState title="Your watchlist is empty" hint="Star any symbol on the Markets page to pin it here." icon={<Star className="h-6 w-6" />} />
       ) : (
         <ul className="divide-y divide-border px-2 pb-2">
-          {rows.map((s) => (
+          {wl.items.map((s) => (
             <li key={s.symbol}>
               <Link href={`/markets/${s.symbol}`} className="flex items-center gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-elevated">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold">{s.symbol}</div>
                   <div className="truncate text-[11px] text-muted">{s.name}</div>
                 </div>
-                <Sparkline data={s.sparkline} width={64} height={24} fill={false} />
-                <div className="w-24 text-right">
-                  <div className="num text-sm font-medium">{usd(s.price)}</div>
-                  <Change change={s.change} changePct={s.change_pct} showAbs={false} className="text-xs" />
-                </div>
+                {s.has_data && s.sparkline ? (
+                  <>
+                    <Sparkline data={s.sparkline} width={64} height={24} fill={false} />
+                    <div className="w-24 text-right">
+                      <div className="num text-sm font-medium">{usd(s.price!)}</div>
+                      <Change change={s.change!} changePct={s.change_pct!} showAbs={false} className="text-xs" />
+                    </div>
+                  </>
+                ) : (
+                  <span className="text-xs text-muted">No data yet</span>
+                )}
                 <FavoriteStar symbol={s.symbol} />
               </Link>
             </li>

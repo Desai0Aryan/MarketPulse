@@ -5,7 +5,9 @@ from bisect import bisect_left
 from collections import defaultdict
 from datetime import date
 
-from app.domain import Checkpoint, Rejection, RunRecord, UpsertResult, utcnow
+from app.domain import (
+    Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, UpsertResult, Watchlist, utcnow,
+)
 from app.ingestion.providers.base import Bar, Instrument
 
 
@@ -23,6 +25,8 @@ class MemoryRepository:
         self._runs: dict[int, RunRecord] = {}
         self._rej: list[tuple[int, Rejection]] = []
         self._next_run = 1
+        self._wl: dict[int, Watchlist] = {}
+        self._next_wl = 1
 
     def ping(self) -> bool:
         return True
@@ -144,3 +148,82 @@ class MemoryRepository:
     def bar_counts(self) -> dict[str, tuple[int, date | None, date | None]]:
         with self._lock:
             return {s: (len(b), min(b) if b else None, max(b) if b else None) for s, b in self._bars.items()}
+
+    # watchlists -------------------------------------------------------
+    MAX_LISTS = 20
+    MAX_ITEMS = 100
+
+    def _get_wl(self, owner: str, wl_id: int) -> Watchlist:
+        wl = self._wl.get(wl_id)
+        if wl is None or wl.owner != owner:  # same error for "missing" and "someone else's": no existence leak
+            raise NotFoundError("Watchlist not found")
+        return wl
+
+    @staticmethod
+    def _copy(wl: Watchlist) -> Watchlist:
+        return Watchlist(wl.id, wl.owner, wl.name, wl.is_default, list(wl.symbols))
+
+    def list_watchlists(self, owner: str) -> list[Watchlist]:
+        with self._lock:
+            return [self._copy(w) for w in sorted(self._wl.values(), key=lambda w: w.id) if w.owner == owner]
+
+    def create_watchlist(self, owner: str, name: str) -> Watchlist:
+        with self._lock:
+            mine = [w for w in self._wl.values() if w.owner == owner]
+            if len(mine) >= self.MAX_LISTS:
+                raise LimitError(f"At most {self.MAX_LISTS} watchlists")
+            if any(w.name.lower() == name.lower() for w in mine):
+                raise ConflictError(f"A watchlist named '{name}' already exists")
+            wl = Watchlist(self._next_wl, owner, name, is_default=not mine, symbols=[])
+            self._wl[wl.id] = wl
+            self._next_wl += 1
+            return self._copy(wl)
+
+    def update_watchlist(self, owner: str, wl_id: int, name: str | None = None, make_default: bool = False) -> Watchlist:
+        with self._lock:
+            wl = self._get_wl(owner, wl_id)
+            if name is not None and name.lower() != wl.name.lower():
+                if any(w.name.lower() == name.lower() for w in self._wl.values() if w.owner == owner):
+                    raise ConflictError(f"A watchlist named '{name}' already exists")
+            if name is not None:
+                wl.name = name
+            if make_default:
+                for w in self._wl.values():
+                    if w.owner == owner:
+                        w.is_default = w.id == wl_id
+            return self._copy(wl)
+
+    def delete_watchlist(self, owner: str, wl_id: int) -> None:
+        with self._lock:
+            wl = self._get_wl(owner, wl_id)
+            del self._wl[wl_id]
+            rest = sorted((w for w in self._wl.values() if w.owner == owner), key=lambda w: w.id)
+            if wl.is_default and rest:
+                rest[0].is_default = True  # always keep exactly one default
+
+    def add_watchlist_item(self, owner: str, wl_id: int, symbol: str) -> Watchlist:
+        with self._lock:
+            wl = self._get_wl(owner, wl_id)
+            if symbol not in self._instruments:
+                raise NotFoundError(f"Unknown symbol '{symbol}'")
+            if symbol not in wl.symbols:  # idempotent
+                if len(wl.symbols) >= self.MAX_ITEMS:
+                    raise LimitError(f"At most {self.MAX_ITEMS} symbols per watchlist")
+                wl.symbols.append(symbol)
+            return self._copy(wl)
+
+    def remove_watchlist_item(self, owner: str, wl_id: int, symbol: str) -> Watchlist:
+        with self._lock:
+            wl = self._get_wl(owner, wl_id)
+            if symbol not in wl.symbols:
+                raise NotFoundError(f"{symbol} is not in this watchlist")
+            wl.symbols.remove(symbol)
+            return self._copy(wl)
+
+    def reorder_watchlist(self, owner: str, wl_id: int, symbols: list[str]) -> Watchlist:
+        with self._lock:
+            wl = self._get_wl(owner, wl_id)
+            if sorted(symbols) != sorted(wl.symbols):
+                raise ConflictError("Order must contain exactly the symbols currently in the watchlist")
+            wl.symbols = list(symbols)
+            return self._copy(wl)

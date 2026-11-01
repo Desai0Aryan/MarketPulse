@@ -72,3 +72,31 @@ class RunRecord:
         if include_events:
             d["events"] = self.events
         return d
+
+
+class RepoError(Exception):
+    """Base class for expected persistence errors (mapped to HTTP status codes by the API)."""
+
+
+class NotFoundError(RepoError):
+    pass
+
+
+class ConflictError(RepoError):
+    pass
+
+
+class LimitError(RepoError):
+    pass
+
+
+@dataclass
+class Watchlist:
+    id: int
+    owner: str
+    name: str
+    is_default: bool
+    symbols: list[str]  # ordered
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "is_default": self.is_default, "symbols": list(self.symbols)}
