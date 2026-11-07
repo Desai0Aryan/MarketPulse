@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import market, pipeline, search, stocks, watchlists
+from app.api.v1 import compare, market, pipeline, screener, search, stocks, watchlists
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services import container
@@ -74,6 +74,8 @@ def create_app() -> FastAPI:
     app.include_router(pipeline.router, prefix="/api/v1")
     app.include_router(search.router, prefix="/api/v1")
     app.include_router(watchlists.router, prefix="/api/v1")
+    app.include_router(screener.router, prefix="/api/v1")
+    app.include_router(compare.router, prefix="/api/v1")
     return app
 
 

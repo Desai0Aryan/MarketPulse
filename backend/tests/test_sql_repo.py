@@ -92,3 +92,15 @@ def test_watchlists_on_postgres(repo):
     assert repo.list_watchlists("mallory") == []
     repo.delete_watchlist("alice", b.id)  # deleting the default promotes the remaining list
     assert repo.list_watchlists("alice")[0].is_default
+
+
+def test_saved_screens_on_postgres(repo):
+    from app.domain import ConflictError, NotFoundError
+
+    sc = repo.create_screen("alice", "Momentum", {"filters": []})
+    with pytest.raises(ConflictError):
+        repo.create_screen("alice", "Momentum", {"filters": []})
+    with pytest.raises(NotFoundError):
+        repo.delete_screen("bob", sc.id)
+    repo.delete_screen("alice", sc.id)
+    assert repo.list_screens("alice") == []

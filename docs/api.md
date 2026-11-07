@@ -16,3 +16,19 @@ CLI: `python -m app.cli seed | backfill SYMBOL --start D [--end D] | ingest | re
 `GET /api/v1/stocks/{symbol}/prices.csv?range=` CSV export (<= 5000 rows, `#`-prefixed metadata lines, text cells protected against formula injection).
 Watchlists (owner-scoped; the "demo" owner until authentication): `GET|POST /watchlists`, `PATCH|DELETE /watchlists/{id}`, `POST /watchlists/{id}/items`, `DELETE /watchlists/{id}/items/{symbol}`, `PUT /watchlists/{id}/order`.
 Errors: 404 unknown/foreign watchlist or symbol, 409 duplicate name or invalid reorder, 422 invalid input or limit (20 lists, 100 symbols each).
+
+## Part 4: Screener & Compare
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/v1/screener/fields` | Metric catalogue (key, label, unit, definition) and limits |
+| POST | `/api/v1/screener/query` | Body: `filters[]` (`field`, `op` in gt/gte/lt/lte/between/eq, `value`, `value2`), `kind`, `sort`, `descending`, `page`, `page_size` (≤100). 422 on unknown field/op, non-finite value, reversed range, > 12 filters |
+| POST | `/api/v1/screener/export.csv` | Same body; first 100 matches (bounded); `#` metadata lines; formula-injection safe |
+| GET/POST | `/api/v1/screener/saved` | Owner-scoped saved screens (max 25, unique name per owner, definition validated before storing) |
+| DELETE | `/api/v1/screener/saved/{id}` | 404 if missing or owned by someone else |
+| POST | `/api/v1/compare` | Body: `symbols` (2-10 distinct), `range`, optional `rolling_pair`, `rolling_window` (10-250). Response: rebased series, per-symbol stats, correlation matrix, coverage, notes |
+| POST | `/api/v1/compare/export.csv` | Rebased series for the aligned window |
+
+**Metric definitions.** Computed server-side from stored bars at each instrument's latest session, using only data up to that session. `rel_volume` = latest volume / mean of the prior 30 sessions. `rsi14` = Wilder RSI on adjusted closes. `volatility_20d` = sample std of the last 20 daily returns × √252. 52-week distances use unadjusted highs/lows over 365 calendar days. A metric that cannot be computed is `null` and a filter on it never matches (never treated as 0).
+
+**Compare alignment.** Inner join on trading days present for every selected symbol; nothing is forward-filled. Dropped days per symbol are reported in `coverage`. Correlation is Pearson on daily simple returns of adjusted closes; constant series give `null`, not 0. Rolling correlation at day *t* uses only the trailing window ending at *t*.

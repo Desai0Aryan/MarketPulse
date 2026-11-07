@@ -205,3 +205,33 @@ export interface ReturnsResponse {
   };
   series: { days: string[]; daily_return: Nums; cumulative_return: Nums; drawdown: Nums };
 }
+
+// ---- Part 4: screener & compare ----
+export interface ScreenField { key: string; label: string; unit: "usd" | "pct" | "x" | "count" | "num" | "bool" | "text"; description: string }
+export interface ScreenCatalog { numeric: ScreenField[]; boolean: ScreenField[]; ops: string[]; limits: { max_filters: number; max_page_size: number } }
+export type ScreenOp = "gt" | "gte" | "lt" | "lte" | "between" | "eq";
+export interface ScreenFilter { field: string; op: ScreenOp; value: number | boolean; value2?: number }
+export interface ScreenQuery { filters: ScreenFilter[]; kind: "equity" | "index_proxy" | null; sort: string; descending: boolean; page: number; page_size: number }
+export interface ScreenRow {
+  symbol: string; name: string; kind: string; sector: string | null; as_of: string;
+  price: number | null; change_pct: number | null; volume: number | null; rel_volume: number | null; rsi14: number | null;
+  volatility_20d: number | null; dist_52w_high_pct: number | null; dist_52w_low_pct: number | null;
+  price_vs_sma50_pct: number | null; price_vs_sma200_pct: number | null; return_1m_pct: number | null; return_3m_pct: number | null;
+  sma50_above_sma200: boolean | null;
+}
+export interface ScreenResult { meta: ApiMeta; total: number; universe: number; page: number; page_size: number; filters: ScreenFilter[]; items: ScreenRow[]; all_symbols: string[] }
+export interface SavedScreen { id: number; name: string; definition: ScreenQuery }
+
+export interface WindowStats {
+  sessions: number; total_return: number | null; annualized_return: number | null; annualized_volatility: number | null;
+  max_drawdown: number | null; best_day: { day: string; return: number | null } | null; worst_day: { day: string; return: number | null } | null; notes: string[];
+}
+export interface CompareResult {
+  meta: ApiMeta; range: string; days: string[]; symbols: string[];
+  normalized: Record<string, Nums>; stats: Record<string, WindowStats>;
+  correlation: { symbols: string[]; matrix: (number | null)[][]; basis: string };
+  coverage: Record<string, { sessions: number; dropped: number }>;
+  rolling_correlation?: { pair: [string, string]; window: number; days: string[]; values: Nums };
+  notes: string[]; basis: string;
+}
+export interface CompareRequest { symbols: string[]; range: "1M" | "3M" | "6M" | "1Y" | "5Y" | "MAX"; rolling_pair?: [string, string] | null; rolling_window?: number }

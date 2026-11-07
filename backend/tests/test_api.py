@@ -163,3 +163,48 @@ def test_watchlist_lifecycle_over_http(client):
     assert client.delete(f"/api/v1/watchlists/{wid}").status_code == 404
     left = client.get("/api/v1/watchlists").json()["items"]
     assert len(left) == 1 and left[0]["is_default"]
+
+
+# ---- Part 4: screener & compare (skipped unless FastAPI is installed) ----
+def test_screener_fields_and_query(client):
+    assert any(f["key"] == "rsi14" for f in client.get("/api/v1/screener/fields").json()["numeric"])
+    r = client.post("/api/v1/screener/query", json={"filters": [{"field": "rsi14", "op": "between", "value": 0, "value2": 100}], "sort": "rsi14"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == len(body["all_symbols"]) and body["meta"]["data_class"] == "simulated"
+
+
+def test_screener_rejects_bad_input(client):
+    assert client.post("/api/v1/screener/query", json={"filters": [{"field": "x", "op": "gt", "value": 1}]}).status_code == 422
+    assert client.post("/api/v1/screener/query", json={"sort": "password"}).status_code == 422
+    assert client.post("/api/v1/screener/query", json={"page_size": 1000}).status_code == 422
+
+
+def test_screener_csv_and_saved(client):
+    csv = client.post("/api/v1/screener/export.csv", json={"filters": []})
+    assert csv.status_code == 200 and csv.text.startswith("# MarketPulse export")
+    body = {"name": "Oversold", "definition": {"filters": [{"field": "rsi14", "op": "lt", "value": 30}]}}
+    created = client.post("/api/v1/screener/saved", json=body)
+    assert created.status_code == 201
+    assert client.post("/api/v1/screener/saved", json=body).status_code == 409
+    bad = {"name": "Bad", "definition": {"filters": [{"field": "nope", "op": "gt", "value": 1}]}}
+    assert client.post("/api/v1/screener/saved", json=bad).status_code == 422
+    sid = created.json()["id"]
+    assert client.delete(f"/api/v1/screener/saved/{sid}").status_code == 204
+    assert client.delete(f"/api/v1/screener/saved/{sid}").status_code == 404
+
+
+def test_compare_endpoint(client):
+    r = client.post("/api/v1/compare", json={"symbols": ["aapl", "MSFT", "NVDA"], "range": "1Y", "rolling_pair": ["AAPL", "MSFT"]})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["symbols"] == ["AAPL", "MSFT", "NVDA"] and j["normalized"]["AAPL"][0] == 100
+    assert len(j["rolling_correlation"]["values"]) == len(j["days"]) - 1
+    csv = client.post("/api/v1/compare/export.csv", json={"symbols": ["AAPL", "MSFT"]})
+    assert csv.status_code == 200 and "AAPL_rebased_100" in csv.text
+
+
+def test_compare_validation(client):
+    assert client.post("/api/v1/compare", json={"symbols": ["AAPL"]}).status_code == 422
+    assert client.post("/api/v1/compare", json={"symbols": ["AAPL", "ZZZZ"]}).status_code == 404
+    assert client.post("/api/v1/compare", json={"symbols": ["AAPL", "AAPL"]}).status_code == 422  # duplicates collapse to 1 symbol

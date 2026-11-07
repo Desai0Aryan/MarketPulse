@@ -100,3 +100,14 @@ class Watchlist:
 
     def to_dict(self) -> dict:
         return {"id": self.id, "name": self.name, "is_default": self.is_default, "symbols": list(self.symbols)}
+
+
+@dataclass
+class SavedScreen:
+    id: int
+    owner: str
+    name: str
+    definition: dict  # validated screener filters + sort + kind
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "definition": self.definition}

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import copy
 import threading
 from bisect import bisect_left
 from collections import defaultdict
 from datetime import date
 
 from app.domain import (
-    Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, UpsertResult, Watchlist, utcnow,
+    Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, SavedScreen, UpsertResult, Watchlist, utcnow,
 )
 from app.ingestion.providers.base import Bar, Instrument
 
@@ -27,6 +28,8 @@ class MemoryRepository:
         self._next_run = 1
         self._wl: dict[int, Watchlist] = {}
         self._next_wl = 1
+        self._screens: dict[int, SavedScreen] = {}
+        self._next_screen = 1
 
     def ping(self) -> bool:
         return True
@@ -227,3 +230,30 @@ class MemoryRepository:
                 raise ConflictError("Order must contain exactly the symbols currently in the watchlist")
             wl.symbols = list(symbols)
             return self._copy(wl)
+
+    # saved screens ----------------------------------------------------
+    MAX_SCREENS = 25
+
+    def list_screens(self, owner: str) -> list[SavedScreen]:
+        with self._lock:
+            return [SavedScreen(x.id, x.owner, x.name, copy.deepcopy(x.definition))
+                    for x in sorted(self._screens.values(), key=lambda x: x.id) if x.owner == owner]
+
+    def create_screen(self, owner: str, name: str, definition: dict) -> SavedScreen:
+        with self._lock:
+            mine = [x for x in self._screens.values() if x.owner == owner]
+            if len(mine) >= self.MAX_SCREENS:
+                raise LimitError(f"At most {self.MAX_SCREENS} saved screens")
+            if any(x.name.lower() == name.lower() for x in mine):
+                raise ConflictError(f"A screen named '{name}' already exists")
+            sc = SavedScreen(self._next_screen, owner, name, copy.deepcopy(definition))
+            self._next_screen += 1
+            self._screens[sc.id] = sc
+            return SavedScreen(sc.id, owner, name, copy.deepcopy(definition))
+
+    def delete_screen(self, owner: str, screen_id: int) -> None:
+        with self._lock:
+            sc = self._screens.get(screen_id)
+            if sc is None or sc.owner != owner:
+                raise NotFoundError("Saved screen not found")
+            del self._screens[screen_id]

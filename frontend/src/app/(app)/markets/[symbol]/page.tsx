@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Check, Download, ListPlus } from "lucide-react";
+import { ArrowLeft, Check, Download, GitCompare, ListPlus } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -142,6 +142,12 @@ export default function SymbolPage() {
         <div className="flex flex-wrap items-end gap-4">
           <div className="flex gap-2">
             <AddToWatchlist symbol={symbol} />
+            <a
+              href={`/compare?symbols=${symbol}`}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium hover:border-accent/60"
+            >
+              <GitCompare className="h-4 w-4" aria-hidden /> Compare
+            </a>
             <a
               href={`/api/v1/stocks/${symbol}/prices.csv?range=${hydrated ? (range === "1W" ? "1M" : range) : "1Y"}`}
               download

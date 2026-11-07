@@ -1,4 +1,4 @@
-import type { ApiMeta, Bar, MarketOverview, RangeKey, StockRow, Instrument, Quote, PipelineStatus, QualityReport, RunSummary, RunDetail, Watchlist, SearchItem, Technicals, TechParams, ReturnsResponse } from "@/types/api";
+import type { ApiMeta, Bar, MarketOverview, RangeKey, StockRow, Instrument, Quote, PipelineStatus, QualityReport, RunSummary, RunDetail, Watchlist, SearchItem, Technicals, TechParams, ReturnsResponse, ScreenCatalog, ScreenQuery, ScreenResult, SavedScreen, CompareRequest, CompareResult } from "@/types/api";
 
 export class ApiError extends Error {
   constructor(
@@ -42,7 +42,37 @@ function send<T>(method: string, path: string, body?: unknown, adminToken?: stri
 
 const post = <T,>(path: string, body: unknown, adminToken?: string) => send<T>("POST", path, body, adminToken);
 
+/** POST a JSON body and save the CSV response as a file (CSV endpoints are POST because they take a filter body). */
+export async function downloadCsv(path: string, body: unknown, fallbackName: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch {
+    throw new ApiError("Cannot reach the MarketPulse API. Is the backend running?", 0);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = ((await res.json()) as { detail?: string }).detail ?? detail; } catch { /* ignore */ }
+    throw new ApiError(detail, res.status);
+  }
+  const m = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "");
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = m?.[1] ?? fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
+  screenerFields: () => get<ScreenCatalog>("/screener/fields"),
+  screenerQuery: (q: ScreenQuery) => post<ScreenResult>("/screener/query", q),
+  savedScreens: () => get<{ items: SavedScreen[] }>("/screener/saved"),
+  saveScreen: (name: string, definition: ScreenQuery) => post<SavedScreen>("/screener/saved", { name, definition }),
+  deleteScreen: (id: number) => request<null>(`/screener/saved/${id}`, { method: "DELETE" }),
+  compare: (req: CompareRequest) => post<CompareResult>("/compare", req),
   watchlists: () => get<{ items: Watchlist[] }>("/watchlists"),
   createWatchlist: (name: string) => post<Watchlist>("/watchlists", { name }),
   updateWatchlist: (id: number, body: { name?: string; is_default?: boolean }) => send<Watchlist>("PATCH", `/watchlists/${id}`, body),

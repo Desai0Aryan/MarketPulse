@@ -15,10 +15,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database.models import (
-    CheckpointRow, IndicatorRow, IngestionRunRow, InstrumentRow, PriceRow, RejectedRecordRow, WatchlistItemRow, WatchlistRow,
+    CheckpointRow, IndicatorRow, IngestionRunRow, InstrumentRow, PriceRow, RejectedRecordRow, SavedScreenRow, WatchlistItemRow, WatchlistRow,
 )
 from app.domain import (
-    Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, UpsertResult, Watchlist, utcnow,
+    Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, SavedScreen, UpsertResult, Watchlist, utcnow,
 )
 from app.ingestion.providers.base import Bar, Instrument
 
@@ -368,3 +368,34 @@ class SqlRepository:
                 s.execute(update(WatchlistItemRow).where(WatchlistItemRow.watchlist_id == wl_id, WatchlistItemRow.instrument_id == iid).values(position=pos))
             s.flush()
             return self._wl(s, row)
+
+    # saved screens ----------------------------------------------------
+    MAX_SCREENS = 25
+
+    @staticmethod
+    def _sc(r: SavedScreenRow) -> SavedScreen:
+        return SavedScreen(r.id, r.owner, r.name, dict(r.definition))
+
+    def list_screens(self, owner: str) -> list[SavedScreen]:
+        with self.session() as s:
+            rows = s.scalars(select(SavedScreenRow).where(SavedScreenRow.owner == owner).order_by(SavedScreenRow.id)).all()
+            return [self._sc(r) for r in rows]
+
+    def create_screen(self, owner: str, name: str, definition: dict) -> SavedScreen:
+        try:
+            with self.session() as s, s.begin():
+                n = s.scalar(select(func.count()).select_from(SavedScreenRow).where(SavedScreenRow.owner == owner)) or 0
+                if n >= self.MAX_SCREENS:
+                    raise LimitError(f"At most {self.MAX_SCREENS} saved screens")
+                row = SavedScreenRow(owner=owner, name=name, definition=definition)
+                s.add(row)
+                s.flush()
+                return self._sc(row)
+        except IntegrityError:
+            raise ConflictError(f"A screen named '{name}' already exists") from None
+
+    def delete_screen(self, owner: str, screen_id: int) -> None:
+        with self.session() as s, s.begin():
+            res = s.execute(delete(SavedScreenRow).where(SavedScreenRow.id == screen_id, SavedScreenRow.owner == owner))
+            if res.rowcount == 0:
+                raise NotFoundError("Saved screen not found")

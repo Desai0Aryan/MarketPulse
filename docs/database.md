@@ -34,3 +34,7 @@ SELECT instrument_id, max(day) FROM prices GROUP BY instrument_id;
 ## Part 3 tables
 
 `watchlists(id, owner, name, is_default)` — unique `(owner, name)`; a partial unique index (`uq_watchlists_one_default`) guarantees at most one default per owner at the database level. `watchlist_items(watchlist_id, instrument_id, position)` — composite PK, cascade delete with either parent. Every repository method filters by `owner`, so a foreign list id returns "not found" exactly like a missing one (no existence leak). Migration `0002`.
+
+## Part 4 table (migration `0003_saved_screens`)
+
+`saved_screens(id, owner, name, definition JSONB, created_at)`, unique `(owner, name)`, index on `owner`. The definition holds validated filters, sort and universe; it is re-validated by the API on every run, so stored definitions can never bypass the filter allow-list.
