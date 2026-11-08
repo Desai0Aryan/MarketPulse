@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
-import { BreadthCard, IndexCards, MoversCard, RoadmapCard, WatchlistPanel } from "@/components/dashboard/Panels";
+import { BreadthCard, IndexCards, MoversCard, RecentAlertsCard, RoadmapCard, WatchlistPanel } from "@/components/dashboard/Panels";
 import { MarketChartCard } from "@/components/dashboard/MarketChartCard";
 import { DataBadge, DemoBanner } from "@/components/shared/DataBadge";
 import { ErrorState, PageHeader, Skeleton } from "@/components/ui/primitives";
@@ -66,6 +66,7 @@ export default function DashboardPage() {
           )}
 
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+            <RecentAlertsCard />
             <RoadmapCard />
           </div>
         </div>

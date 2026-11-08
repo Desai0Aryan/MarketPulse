@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func,
@@ -131,3 +132,64 @@ class SavedScreenRow(Base):
     definition: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (UniqueConstraint("owner", "name", name="uq_saved_screens_owner_name"), Index("ix_saved_screens_owner", "owner"))
+
+
+class PortfolioRow(Base):
+    __tablename__ = "portfolios"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(60), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint("owner", "name", name="uq_portfolios_owner_name"), Index("ix_portfolios_owner", "owner"))
+
+
+class PortfolioTxnRow(Base):
+    __tablename__ = "portfolio_transactions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(16))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False, default=0)
+    price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
+    fee: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False, default=0)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (Index("ix_portfolio_txn_pf_day", "portfolio_id", "day"),)
+
+
+class AlertRow(Base):
+    __tablename__ = "alerts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    window: Mapped[int | None] = mapped_column(Integer)
+    cooldown_days: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    last_observed_day: Mapped[date | None] = mapped_column(Date)
+    last_condition: Mapped[bool | None] = mapped_column(Boolean)
+    fired_in_episode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_fired_day: Mapped[date | None] = mapped_column(Date)
+    created_day: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (Index("ix_alerts_owner", "owner"), Index("ix_alerts_enabled", "enabled"))
+
+
+class AlertEventRow(Base):
+    __tablename__ = "alert_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    alert_id: Mapped[int] = mapped_column(ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False)
+    owner: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    observed_day: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_value: Mapped[float] = mapped_column(Float, nullable=False)
+    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    __table_args__ = (Index("ix_alert_events_owner", "owner", "id"), Index("ix_alert_events_alert", "alert_id"))

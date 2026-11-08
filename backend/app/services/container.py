@@ -32,7 +32,10 @@ def get_repo() -> Repository:
 
 @lru_cache
 def get_ingestion() -> IngestionService:
-    return IngestionService(get_provider(), get_repo())
+    from app.services import alerts  # local import: keeps the container import graph acyclic
+
+    repo = get_repo()
+    return IngestionService(get_provider(), repo, after_run=lambda _run: alerts.evaluate_all(repo))
 
 
 def reset_for_tests() -> None:

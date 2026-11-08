@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
@@ -111,3 +112,96 @@ class SavedScreen:
 
     def to_dict(self) -> dict:
         return {"id": self.id, "name": self.name, "definition": self.definition}
+
+
+@dataclass
+class Portfolio:
+    id: int
+    owner: str
+    name: str
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name}
+
+
+@dataclass
+class Txn:
+    """One paper-portfolio ledger entry. `id == 0` means "not yet stored".
+
+    kind: deposit | withdraw (use `amount`) or buy | sell (use `symbol`, `quantity`, `price`, `fee`).
+    """
+
+    id: int
+    portfolio_id: int
+    day: date
+    kind: str
+    symbol: str | None = None
+    quantity: Decimal = Decimal(0)
+    price: Decimal = Decimal(0)
+    fee: Decimal = Decimal(0)
+    amount: Decimal = Decimal(0)
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "day": self.day.isoformat(), "kind": self.kind, "symbol": self.symbol,
+            "quantity": float(self.quantity), "price": float(self.price), "fee": float(self.fee),
+            "amount": float(self.amount), "note": self.note,
+        }
+
+
+@dataclass
+class Alert:
+    id: int
+    owner: str
+    symbol: str
+    kind: str  # see app.services.alerts.KINDS
+    threshold: float
+    window: int | None = None  # SMA window for cross_* kinds
+    cooldown_days: int = 1
+    enabled: bool = True
+    note: str = ""
+    # engine state ------------------------------------------------------
+    last_observed_day: date | None = None  # newest session already evaluated (never evaluated twice)
+    last_condition: bool | None = None  # condition value at that session; None = never baselined
+    fired_in_episode: bool = False  # fired since the condition last became false
+    last_fired_day: date | None = None
+    created_day: date | None = None
+
+    @property
+    def status(self) -> str:
+        if not self.enabled:
+            return "paused"
+        return "triggered" if self.fired_in_episode else "active"
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "symbol": self.symbol, "kind": self.kind, "threshold": self.threshold, "window": self.window,
+            "cooldown_days": self.cooldown_days, "enabled": self.enabled, "note": self.note, "status": self.status,
+            "waiting_for_reset": bool(self.enabled and self.last_condition and not self.fired_in_episode),
+            "last_observed_day": self.last_observed_day.isoformat() if self.last_observed_day else None,
+            "last_fired_day": self.last_fired_day.isoformat() if self.last_fired_day else None,
+            "created_day": self.created_day.isoformat() if self.created_day else None,
+        }
+
+
+@dataclass
+class AlertEvent:
+    id: int
+    alert_id: int
+    owner: str
+    symbol: str
+    kind: str
+    observed_day: date  # the stored session whose data satisfied the condition
+    observed_value: float
+    threshold: float
+    message: str
+    evaluated_at: datetime
+    read: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "alert_id": self.alert_id, "symbol": self.symbol, "kind": self.kind,
+            "observed_day": self.observed_day.isoformat(), "observed_value": self.observed_value,
+            "threshold": self.threshold, "message": self.message, "evaluated_at": self.evaluated_at.isoformat(), "read": self.read,
+        }

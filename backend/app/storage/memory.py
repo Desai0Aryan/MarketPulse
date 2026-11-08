@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import threading
 from bisect import bisect_left
 from collections import defaultdict
@@ -8,6 +9,7 @@ from datetime import date
 
 from app.domain import (
     Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, SavedScreen, UpsertResult, Watchlist, utcnow,
+    Alert, AlertEvent, Portfolio, Txn,
 )
 from app.ingestion.providers.base import Bar, Instrument
 
@@ -30,6 +32,14 @@ class MemoryRepository:
         self._next_wl = 1
         self._screens: dict[int, SavedScreen] = {}
         self._next_screen = 1
+        self._pf: dict[int, Portfolio] = {}
+        self._txns: dict[int, list[Txn]] = {}
+        self._next_pf = 1
+        self._next_txn = 1
+        self._alerts: dict[int, Alert] = {}
+        self._events: list[AlertEvent] = []
+        self._next_alert = 1
+        self._next_event = 1
 
     def ping(self) -> bool:
         return True
@@ -257,3 +267,151 @@ class MemoryRepository:
             if sc is None or sc.owner != owner:
                 raise NotFoundError("Saved screen not found")
             del self._screens[screen_id]
+
+    # portfolios -------------------------------------------------------
+    MAX_PORTFOLIOS = 10
+    MAX_TXNS = 2000
+
+    def _pf_get(self, owner: str, pid: int) -> Portfolio:
+        p = self._pf.get(pid)
+        if p is None or p.owner != owner:
+            raise NotFoundError("Portfolio not found")
+        return p
+
+    def list_portfolios(self, owner: str) -> list[Portfolio]:
+        with self._lock:
+            return [dataclasses.replace(p) for p in sorted(self._pf.values(), key=lambda p: p.id) if p.owner == owner]
+
+    def create_portfolio(self, owner: str, name: str, initial: Txn | None = None) -> Portfolio:
+        with self._lock:
+            mine = [p for p in self._pf.values() if p.owner == owner]
+            if len(mine) >= self.MAX_PORTFOLIOS:
+                raise LimitError(f"At most {self.MAX_PORTFOLIOS} portfolios")
+            if any(p.name.lower() == name.lower() for p in mine):
+                raise ConflictError(f"A portfolio named '{name}' already exists")
+            p = Portfolio(self._next_pf, owner, name)
+            self._next_pf += 1
+            self._pf[p.id] = p
+            self._txns[p.id] = []
+            if initial is not None:
+                self._append_txn(p.id, initial)
+            return dataclasses.replace(p)
+
+    def _append_txn(self, pid: int, txn: Txn) -> Txn:
+        t = dataclasses.replace(txn, id=self._next_txn, portfolio_id=pid)
+        self._next_txn += 1
+        self._txns[pid].append(t)
+        return t
+
+    def get_portfolio(self, owner: str, pid: int) -> Portfolio:
+        with self._lock:
+            return dataclasses.replace(self._pf_get(owner, pid))
+
+    def delete_portfolio(self, owner: str, pid: int) -> None:
+        with self._lock:
+            self._pf_get(owner, pid)
+            del self._pf[pid], self._txns[pid]
+
+    def list_txns(self, owner: str, pid: int) -> list[Txn]:
+        with self._lock:
+            self._pf_get(owner, pid)
+            return [dataclasses.replace(t) for t in self._txns[pid]]
+
+    def add_txn(self, owner: str, pid: int, txn: Txn, validate) -> Txn:
+        with self._lock:
+            self._pf_get(owner, pid)
+            if len(self._txns[pid]) >= self.MAX_TXNS:
+                raise LimitError(f"At most {self.MAX_TXNS} transactions per portfolio")
+            validate([*self._txns[pid], dataclasses.replace(txn, portfolio_id=pid)])  # raises -> nothing stored
+            return dataclasses.replace(self._append_txn(pid, txn))
+
+    def delete_txn(self, owner: str, pid: int, txn_id: int, validate) -> None:
+        with self._lock:
+            self._pf_get(owner, pid)
+            rest = [t for t in self._txns[pid] if t.id != txn_id]
+            if len(rest) == len(self._txns[pid]):
+                raise NotFoundError("Transaction not found")
+            validate(rest)
+            self._txns[pid] = rest
+
+    # alerts -----------------------------------------------------------
+    MAX_ALERTS = 50
+    MAX_EVENTS = 500
+
+    def _alert_get(self, owner: str, alert_id: int) -> Alert:
+        a = self._alerts.get(alert_id)
+        if a is None or a.owner != owner:
+            raise NotFoundError("Alert not found")
+        return a
+
+    def list_alerts(self, owner: str) -> list[Alert]:
+        with self._lock:
+            return [dataclasses.replace(a) for a in sorted(self._alerts.values(), key=lambda a: a.id) if a.owner == owner]
+
+    def create_alert(self, owner: str, alert: Alert) -> Alert:
+        with self._lock:
+            if sum(1 for a in self._alerts.values() if a.owner == owner) >= self.MAX_ALERTS:
+                raise LimitError(f"At most {self.MAX_ALERTS} alerts")
+            a = dataclasses.replace(alert, id=self._next_alert, owner=owner)
+            self._next_alert += 1
+            self._alerts[a.id] = a
+            return dataclasses.replace(a)
+
+    def get_alert(self, owner: str, alert_id: int) -> Alert:
+        with self._lock:
+            return dataclasses.replace(self._alert_get(owner, alert_id))
+
+    def update_alert(self, owner: str, alert_id: int, fields: dict) -> Alert:
+        with self._lock:
+            a = self._alert_get(owner, alert_id)
+            for k, v in fields.items():
+                if not hasattr(a, k) or k in ("id", "owner"):
+                    raise ValueError(f"cannot update {k}")
+                setattr(a, k, v)
+            return dataclasses.replace(a)
+
+    def delete_alert(self, owner: str, alert_id: int) -> None:
+        with self._lock:
+            self._alert_get(owner, alert_id)
+            del self._alerts[alert_id]
+            self._events = [e for e in self._events if e.alert_id != alert_id]
+
+    def list_enabled_alerts(self) -> list[Alert]:
+        with self._lock:
+            return [dataclasses.replace(a) for a in sorted(self._alerts.values(), key=lambda a: a.id) if a.enabled]
+
+    def record_evaluation(self, alert_id: int, expected_last_observed_day, ev, now) -> bool:
+        """Compare-and-set on last_observed_day: if another evaluation already advanced it, apply nothing."""
+        with self._lock:
+            a = self._alerts.get(alert_id)
+            if a is None or not a.enabled or a.last_observed_day != expected_last_observed_day:
+                return False
+            a.last_observed_day, a.last_condition = ev.last_observed_day, ev.last_condition
+            a.fired_in_episode, a.last_fired_day = ev.fired_in_episode, ev.last_fired_day
+            for e in ev.events:
+                self._events.append(AlertEvent(self._next_event, a.id, a.owner, a.symbol, a.kind, e["observed_day"],
+                                               e["observed_value"], a.threshold, e["message"], now))
+                self._next_event += 1
+            mine = [e for e in self._events if e.owner == a.owner]
+            if len(mine) > self.MAX_EVENTS:
+                drop = {e.id for e in mine[: len(mine) - self.MAX_EVENTS]}
+                self._events = [e for e in self._events if e.id not in drop]
+            return True
+
+    def list_events(self, owner: str, alert_id: int | None = None, limit: int = 50, unread_only: bool = False) -> list[AlertEvent]:
+        with self._lock:
+            rows = [e for e in self._events if e.owner == owner and (alert_id is None or e.alert_id == alert_id) and (not e.read or not unread_only)]
+            return [dataclasses.replace(e) for e in sorted(rows, key=lambda e: e.id, reverse=True)[:limit]]
+
+    def unread_count(self, owner: str) -> int:
+        with self._lock:
+            return sum(1 for e in self._events if e.owner == owner and not e.read)
+
+    def mark_events_read(self, owner: str, ids: list[int] | None) -> int:
+        with self._lock:
+            n = 0
+            for e in self._events:
+                if e.owner == owner and not e.read and (ids is None or e.id in ids):
+                    e.read = True
+                    n += 1
+            return n

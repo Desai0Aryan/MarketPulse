@@ -38,3 +38,7 @@ SELECT instrument_id, max(day) FROM prices GROUP BY instrument_id;
 ## Part 4 table (migration `0003_saved_screens`)
 
 `saved_screens(id, owner, name, definition JSONB, created_at)`, unique `(owner, name)`, index on `owner`. The definition holds validated filters, sort and universe; it is re-validated by the API on every run, so stored definitions can never bypass the filter allow-list.
+
+## Part 5 tables (migration `0004_portfolio_alerts`)
+
+`portfolios(owner, name)` unique per owner; `portfolio_transactions(portfolio_id, day, kind, symbol, quantity NUMERIC(24,6), price NUMERIC(18,4), fee, amount, note)` with CHECK constraints on kind and non-negative values; `alerts(owner, symbol, kind, threshold, window, cooldown_days, enabled, engine state: last_observed_day, last_condition, fired_in_episode, last_fired_day)`; `alert_events(alert_id, owner, symbol, kind, observed_day, observed_value, threshold, message, evaluated_at, read)`. Events are capped at 500 per owner.

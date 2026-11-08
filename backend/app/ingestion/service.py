@@ -35,12 +35,14 @@ class IngestionService:
         policy: RetryPolicy | None = None,
         limiter: RateLimiter | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        after_run: Callable[[RunRecord], None] | None = None,
     ) -> None:
         self.provider = provider
         self.repo = repo
         self.policy = policy or RetryPolicy()
         self.limiter = limiter or RateLimiter(per_second=0)
         self._sleep = sleep
+        self._after_run = after_run  # e.g. alert evaluation; its failure never fails the ingestion
         self._lock = threading.Lock()  # one job at a time per process (duplicate-job protection)
         self.current_run_id: int | None = None
 
@@ -126,6 +128,11 @@ class IngestionService:
             self.current_run_id = None
             self._lock.release()
         log.info("ingestion finished", extra={"path": f"run={run.id} status={run.status}"})
+        if self._after_run is not None and run.status in ("success", "partial"):
+            try:
+                self._after_run(run)
+            except Exception:  # noqa: BLE001 - post-run hooks must never break the pipeline
+                log.exception("post-ingestion hook failed")
         return run
 
     # ----------------------------------------------------------------- internals

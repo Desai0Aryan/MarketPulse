@@ -208,3 +208,77 @@ def test_compare_validation(client):
     assert client.post("/api/v1/compare", json={"symbols": ["AAPL"]}).status_code == 422
     assert client.post("/api/v1/compare", json={"symbols": ["AAPL", "ZZZZ"]}).status_code == 404
     assert client.post("/api/v1/compare", json={"symbols": ["AAPL", "AAPL"]}).status_code == 422  # duplicates collapse to 1 symbol
+
+
+# ---- Part 5: portfolio & alerts (skipped unless FastAPI is installed) ----
+def _new_portfolio(client, cash=10000):
+    r = client.post("/api/v1/portfolios", json={"name": "Test", "initial_cash": cash, "start_day": "2026-01-05"})
+    assert r.status_code == 201
+    return r.json()["id"]
+
+
+def test_portfolio_lifecycle_and_accounting(client):
+    pid = _new_portfolio(client)
+    base = f"/api/v1/portfolios/{pid}"
+    buy = {"day": "2026-01-06", "kind": "buy", "symbol": "aapl", "quantity": 10, "price": 100, "fee": 1}
+    r = client.post(f"{base}/transactions", json=buy)
+    assert r.status_code == 201 and r.json()["transaction"]["symbol"] == "AAPL"
+    assert any("50%" in w for w in r.json()["warnings"]) or r.json()["warnings"] == []  # mock price may or may not be near 100
+    d = client.get(base).json()
+    assert d["summary"]["cash"] == 8999 and d["summary"]["invested_capital"] == 1001
+    assert d["disclaimer"].startswith("Paper portfolio")
+    over = client.post(f"{base}/transactions", json={**buy, "kind": "sell", "quantity": 11})
+    assert over.status_code == 422 and "exceeds" in over.json()["detail"]
+    perf = client.get(f"{base}/performance?range=MAX").json()
+    assert perf["benchmark"] == "SPY" and perf["twr_index"][0] == 100.0
+    assert client.get(f"{base}/transactions.csv").text.startswith("# MarketPulse export")
+
+
+def test_portfolio_validation_and_isolation(client):
+    pid = _new_portfolio(client, 100)
+    base = f"/api/v1/portfolios/{pid}/transactions"
+    assert client.post(base, json={"day": "2026-01-06", "kind": "buy", "symbol": "AAPL", "quantity": 1000, "price": 100}).status_code == 422  # no cash
+    assert client.post(base, json={"day": "2099-01-01", "kind": "deposit", "amount": 5}).status_code == 422  # future
+    assert client.post(base, json={"day": "2026-01-06", "kind": "buy", "symbol": "NOPE", "quantity": 1, "price": 1}).status_code == 422
+    assert client.post(base, json={"day": "2026-01-06", "kind": "deposit", "amount": -5}).status_code == 422
+    assert client.get("/api/v1/portfolios/9999").status_code == 404
+    assert client.get(f"/api/v1/portfolios/{pid}/performance?benchmark=AAPL").status_code == 422  # not an index proxy
+
+
+def test_alert_crud_and_notifications(client):
+    k = client.get("/api/v1/alerts/kinds").json()
+    assert any(i["kind"] == "rsi_above" for i in k["items"])
+    r = client.post("/api/v1/alerts", json={"symbol": "NVDA", "kind": "price_above", "threshold": 1e9})
+    assert r.status_code == 201 and r.json()["status"] == "active"
+    aid = r.json()["id"]
+    assert client.post("/api/v1/alerts", json={"symbol": "NVDA", "kind": "bogus", "threshold": 1}).status_code == 422
+    assert client.post("/api/v1/alerts", json={"symbol": "ZZZZ", "kind": "price_above", "threshold": 1}).status_code == 404
+    assert client.patch(f"/api/v1/alerts/{aid}", json={"enabled": False}).json()["status"] == "paused"
+    assert client.patch(f"/api/v1/alerts/{aid}", json={"threshold": -1}).status_code == 422
+    n = client.get("/api/v1/notifications").json()
+    assert n["unread"] == 0 and n["items"] == []
+    assert client.post("/api/v1/alerts/evaluate").json()["alerts_checked"] == 0  # paused
+    assert client.delete(f"/api/v1/alerts/{aid}").status_code == 204
+    assert client.delete(f"/api/v1/alerts/{aid}").status_code == 404
+
+
+def test_alert_fires_after_new_session_ingested(client):
+    from datetime import timedelta
+
+    from app.services import container
+
+    repo = container.get_repo()
+    last = repo.get_bars("AAPL")[-1]
+    thr = round(last.close * 1.02, 2)
+    aid = client.post("/api/v1/alerts", json={"symbol": "AAPL", "kind": "price_above", "threshold": thr, "cooldown_days": 0}).json()["id"]
+    from app.ingestion.providers.base import Bar
+
+    nxt = Bar(last.day + timedelta(days=1), last.close, thr + 5, last.close, thr + 3, thr + 3, last.volume)
+    repo.upsert_bars("AAPL", [nxt], None)
+    assert client.post("/api/v1/alerts/evaluate").json()["events_created"] == 1
+    assert client.post("/api/v1/alerts/evaluate").json()["events_created"] == 0  # no duplicate
+    n = client.get("/api/v1/notifications").json()
+    assert n["unread"] == 1 and n["items"][0]["observed_value"] == nxt.close
+    assert client.post("/api/v1/notifications/read", json={"ids": None}).json()["marked"] == 1
+    assert client.get("/api/v1/notifications").json()["unread"] == 0
+    assert client.get("/api/v1/alerts").json()["items"][0]["status"] == "triggered" and aid

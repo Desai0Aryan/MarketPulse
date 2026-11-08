@@ -235,3 +235,34 @@ export interface CompareResult {
   notes: string[]; basis: string;
 }
 export interface CompareRequest { symbols: string[]; range: "1M" | "3M" | "6M" | "1Y" | "5Y" | "MAX"; rolling_pair?: [string, string] | null; rolling_window?: number }
+
+// ---- Part 5: portfolio & alerts ----
+export interface PositionRow {
+  symbol: string; quantity: number; avg_cost: number; cost_basis: number; price: number | null; price_day: string | null; stale: boolean;
+  market_value: number | null; unrealized_pnl: number | null; unrealized_pct: number | null; realized_pnl: number | null; weight: number | null;
+}
+export interface PortfolioSummary {
+  as_of: string; cash: number; positions_market_value: number; total_value: number; invested_capital: number; net_deposits: number;
+  unrealized_pnl: number; realized_pnl: number; fees_paid: number; total_pnl_vs_deposits: number; positions: PositionRow[];
+  largest_positions: PositionRow[]; allocation: { label: string; value: number | null; weight: number | null }[];
+  complete: boolean; missing_prices: string[]; stale_prices: string[]; notes: string[];
+}
+export interface PortfolioListItem { id: number; name: string; total_value: number; cash: number; unrealized_pnl: number; realized_pnl: number; complete: boolean }
+export interface PortfolioDetail {
+  meta: ApiMeta; disclaimer: string; portfolio: { id: number; name: string }; summary: PortfolioSummary;
+  daily_change: { day: string; change: number; change_pct: number | null } | null; transaction_count: number;
+}
+export interface TxnRow { id: number; day: string; kind: "deposit" | "withdraw" | "buy" | "sell"; symbol: string | null; quantity: number; price: number; fee: number; amount: number; note: string }
+export interface TxnInput { day: string; kind: TxnRow["kind"]; symbol?: string | null; quantity?: number; price?: number; fee?: number; amount?: number; note?: string }
+export interface PortfolioPerformance {
+  meta: ApiMeta; disclaimer: string; benchmark: string; range: string; days: string[]; value: Nums; net_deposits: Nums; twr_index: Nums; benchmark_index: Nums;
+  drawdown: Nums; stats: { twr_return: number; benchmark_return: number; max_drawdown: number; sessions: number } | null; notes: string[]; basis?: string;
+}
+export interface AlertKindInfo { kind: string; label: string; crossing: boolean }
+export interface AlertItem {
+  id: number; symbol: string; kind: string; threshold: number; window: number | null; cooldown_days: number; enabled: boolean; note: string;
+  status: "active" | "triggered" | "paused"; waiting_for_reset: boolean; last_observed_day: string | null; last_fired_day: string | null; created_day: string | null;
+}
+export interface AlertInput { symbol: string; kind: string; threshold: number; window?: number | null; cooldown_days: number; note?: string }
+export interface AlertEventItem { id: number; alert_id: number; symbol: string; kind: string; observed_day: string; observed_value: number; threshold: number; message: string; evaluated_at: string; read: boolean }
+export interface NotificationsResponse { unread: number; items: AlertEventItem[] }

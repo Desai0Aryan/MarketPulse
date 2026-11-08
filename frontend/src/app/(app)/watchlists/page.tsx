@@ -2,7 +2,7 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Pencil, Plus, Search, Star, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Bell, Pencil, Plus, Search, Star, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Sparkline } from "@/components/charts/Sparkline";
@@ -204,6 +204,7 @@ export default function WatchlistsPage() {
                             <div className="flex justify-end gap-1">
                               <button onClick={() => move(sel, i, -1)} disabled={i === 0 || reorder.isPending} aria-label={`Move ${it.symbol} up`} className="grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-elevated disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" /></button>
                               <button onClick={() => move(sel, i, 1)} disabled={i === sel.items.length - 1 || reorder.isPending} aria-label={`Move ${it.symbol} down`} className="grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-elevated disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" /></button>
+                              <a href={`/alerts?symbol=${it.symbol}`} aria-label={`Create alert for ${it.symbol}`} className="grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-elevated hover:text-fg"><Bell className="h-3.5 w-3.5" /></a>
                               <button onClick={() => removeItem.mutate({ id: sel.id, symbol: it.symbol })} aria-label={`Remove ${it.symbol}`} className="grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-down/10 hover:text-down"><X className="h-3.5 w-3.5" /></button>
                             </div>
                           </td>

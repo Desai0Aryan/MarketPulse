@@ -7,7 +7,7 @@ real PostgreSQL (`MP_TEST_DATABASE_URL=...`) before relying on it.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import create_engine, delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -15,10 +15,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database.models import (
-    CheckpointRow, IndicatorRow, IngestionRunRow, InstrumentRow, PriceRow, RejectedRecordRow, SavedScreenRow, WatchlistItemRow, WatchlistRow,
+    CheckpointRow, IndicatorRow, IngestionRunRow, InstrumentRow, PriceRow, AlertEventRow, AlertRow, PortfolioRow, PortfolioTxnRow, RejectedRecordRow, SavedScreenRow, WatchlistItemRow, WatchlistRow,
 )
 from app.domain import (
     Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, SavedScreen, UpsertResult, Watchlist, utcnow,
+    Alert, AlertEvent, Portfolio, Txn,
 )
 from app.ingestion.providers.base import Bar, Instrument
 
@@ -399,3 +400,176 @@ class SqlRepository:
             res = s.execute(delete(SavedScreenRow).where(SavedScreenRow.id == screen_id, SavedScreenRow.owner == owner))
             if res.rowcount == 0:
                 raise NotFoundError("Saved screen not found")
+
+    # portfolios -------------------------------------------------------
+    MAX_PORTFOLIOS = 10
+    MAX_TXNS = 2000
+
+    @staticmethod
+    def _txn(r: PortfolioTxnRow) -> Txn:
+        return Txn(r.id, r.portfolio_id, r.day, r.kind, r.symbol, r.quantity, r.price, r.fee, r.amount, r.note)
+
+    @staticmethod
+    def _txn_row(pid: int, t: Txn) -> PortfolioTxnRow:
+        return PortfolioTxnRow(portfolio_id=pid, day=t.day, kind=t.kind, symbol=t.symbol, quantity=t.quantity,
+                               price=t.price, fee=t.fee, amount=t.amount, note=t.note)
+
+    def _own_portfolio(self, s: Session, owner: str, pid: int, lock: bool = False) -> PortfolioRow:
+        q = select(PortfolioRow).where(PortfolioRow.id == pid, PortfolioRow.owner == owner)
+        row = s.scalar(q.with_for_update() if lock else q)  # FOR UPDATE serialises concurrent ledger writes
+        if row is None:
+            raise NotFoundError("Portfolio not found")
+        return row
+
+    def list_portfolios(self, owner: str) -> list[Portfolio]:
+        with self.session() as s:
+            rows = s.scalars(select(PortfolioRow).where(PortfolioRow.owner == owner).order_by(PortfolioRow.id)).all()
+            return [Portfolio(r.id, r.owner, r.name) for r in rows]
+
+    def create_portfolio(self, owner: str, name: str, initial: Txn | None = None) -> Portfolio:
+        try:
+            with self.session() as s, s.begin():
+                n = s.scalar(select(func.count()).select_from(PortfolioRow).where(PortfolioRow.owner == owner)) or 0
+                if n >= self.MAX_PORTFOLIOS:
+                    raise LimitError(f"At most {self.MAX_PORTFOLIOS} portfolios")
+                row = PortfolioRow(owner=owner, name=name)
+                s.add(row)
+                s.flush()
+                if initial is not None:
+                    s.add(self._txn_row(row.id, initial))
+                return Portfolio(row.id, owner, name)
+        except IntegrityError:
+            raise ConflictError(f"A portfolio named '{name}' already exists") from None
+
+    def get_portfolio(self, owner: str, pid: int) -> Portfolio:
+        with self.session() as s:
+            r = self._own_portfolio(s, owner, pid)
+            return Portfolio(r.id, r.owner, r.name)
+
+    def delete_portfolio(self, owner: str, pid: int) -> None:
+        with self.session() as s, s.begin():
+            self._own_portfolio(s, owner, pid)
+            s.execute(delete(PortfolioRow).where(PortfolioRow.id == pid))
+
+    def _load_txns(self, s: Session, pid: int) -> list[Txn]:
+        rows = s.scalars(select(PortfolioTxnRow).where(PortfolioTxnRow.portfolio_id == pid).order_by(PortfolioTxnRow.id)).all()
+        return [self._txn(r) for r in rows]
+
+    def list_txns(self, owner: str, pid: int) -> list[Txn]:
+        with self.session() as s:
+            self._own_portfolio(s, owner, pid)
+            return self._load_txns(s, pid)
+
+    def add_txn(self, owner: str, pid: int, txn: Txn, validate) -> Txn:
+        with self.session() as s, s.begin():
+            self._own_portfolio(s, owner, pid, lock=True)
+            existing = self._load_txns(s, pid)
+            if len(existing) >= self.MAX_TXNS:
+                raise LimitError(f"At most {self.MAX_TXNS} transactions per portfolio")
+            validate([*existing, txn])  # raises -> the transaction rolls back, nothing is stored
+            row = self._txn_row(pid, txn)
+            s.add(row)
+            s.flush()
+            return self._txn(row)
+
+    def delete_txn(self, owner: str, pid: int, txn_id: int, validate) -> None:
+        with self.session() as s, s.begin():
+            self._own_portfolio(s, owner, pid, lock=True)
+            existing = self._load_txns(s, pid)
+            rest = [t for t in existing if t.id != txn_id]
+            if len(rest) == len(existing):
+                raise NotFoundError("Transaction not found")
+            validate(rest)
+            s.execute(delete(PortfolioTxnRow).where(PortfolioTxnRow.id == txn_id, PortfolioTxnRow.portfolio_id == pid))
+
+    # alerts -----------------------------------------------------------
+    MAX_ALERTS = 50
+    MAX_EVENTS = 500
+    _ALERT_FIELDS = ("symbol", "kind", "threshold", "window", "cooldown_days", "enabled", "note", "last_observed_day",
+                     "last_condition", "fired_in_episode", "last_fired_day", "created_day")
+
+    @staticmethod
+    def _alert(r: AlertRow) -> Alert:
+        return Alert(r.id, r.owner, r.symbol, r.kind, r.threshold, r.window, r.cooldown_days, r.enabled, r.note,
+                     r.last_observed_day, r.last_condition, r.fired_in_episode, r.last_fired_day, r.created_day)
+
+    def _own_alert(self, s: Session, owner: str, alert_id: int) -> AlertRow:
+        r = s.scalar(select(AlertRow).where(AlertRow.id == alert_id, AlertRow.owner == owner))
+        if r is None:
+            raise NotFoundError("Alert not found")
+        return r
+
+    def list_alerts(self, owner: str) -> list[Alert]:
+        with self.session() as s:
+            return [self._alert(r) for r in s.scalars(select(AlertRow).where(AlertRow.owner == owner).order_by(AlertRow.id))]
+
+    def create_alert(self, owner: str, alert: Alert) -> Alert:
+        with self.session() as s, s.begin():
+            n = s.scalar(select(func.count()).select_from(AlertRow).where(AlertRow.owner == owner)) or 0
+            if n >= self.MAX_ALERTS:
+                raise LimitError(f"At most {self.MAX_ALERTS} alerts")
+            row = AlertRow(owner=owner, **{k: getattr(alert, k) for k in self._ALERT_FIELDS})
+            s.add(row)
+            s.flush()
+            return self._alert(row)
+
+    def get_alert(self, owner: str, alert_id: int) -> Alert:
+        with self.session() as s:
+            return self._alert(self._own_alert(s, owner, alert_id))
+
+    def update_alert(self, owner: str, alert_id: int, fields: dict) -> Alert:
+        with self.session() as s, s.begin():
+            r = self._own_alert(s, owner, alert_id)
+            for k, v in fields.items():
+                if k not in self._ALERT_FIELDS:
+                    raise ValueError(f"cannot update {k}")
+                setattr(r, k, v)
+            s.flush()
+            return self._alert(r)
+
+    def delete_alert(self, owner: str, alert_id: int) -> None:
+        with self.session() as s, s.begin():
+            self._own_alert(s, owner, alert_id)
+            s.execute(delete(AlertRow).where(AlertRow.id == alert_id))
+
+    def list_enabled_alerts(self) -> list[Alert]:
+        with self.session() as s:
+            return [self._alert(r) for r in s.scalars(select(AlertRow).where(AlertRow.enabled.is_(True)).order_by(AlertRow.id))]
+
+    def record_evaluation(self, alert_id: int, expected_last_observed_day, ev, now: datetime) -> bool:
+        """Compare-and-set on last_observed_day inside one transaction, so two evaluators cannot both fire."""
+        with self.session() as s, s.begin():
+            r = s.scalar(select(AlertRow).where(AlertRow.id == alert_id).with_for_update())
+            if r is None or not r.enabled or r.last_observed_day != expected_last_observed_day:
+                return False
+            r.last_observed_day, r.last_condition = ev.last_observed_day, ev.last_condition
+            r.fired_in_episode, r.last_fired_day = ev.fired_in_episode, ev.last_fired_day
+            for e in ev.events:
+                s.add(AlertEventRow(alert_id=r.id, owner=r.owner, symbol=r.symbol, kind=r.kind, observed_day=e["observed_day"],
+                                    observed_value=e["observed_value"], threshold=r.threshold, message=e["message"], evaluated_at=now))
+            s.flush()
+            keep = s.scalars(select(AlertEventRow.id).where(AlertEventRow.owner == r.owner).order_by(AlertEventRow.id.desc()).limit(self.MAX_EVENTS)).all()
+            if len(keep) == self.MAX_EVENTS:
+                s.execute(delete(AlertEventRow).where(AlertEventRow.owner == r.owner, AlertEventRow.id < min(keep)))
+            return True
+
+    def list_events(self, owner: str, alert_id: int | None = None, limit: int = 50, unread_only: bool = False) -> list[AlertEvent]:
+        with self.session() as s:
+            q = select(AlertEventRow).where(AlertEventRow.owner == owner)
+            if alert_id is not None:
+                q = q.where(AlertEventRow.alert_id == alert_id)
+            if unread_only:
+                q = q.where(AlertEventRow.read.is_(False))
+            return [AlertEvent(r.id, r.alert_id, r.owner, r.symbol, r.kind, r.observed_day, r.observed_value, r.threshold,
+                               r.message, r.evaluated_at, r.read) for r in s.scalars(q.order_by(AlertEventRow.id.desc()).limit(limit))]
+
+    def unread_count(self, owner: str) -> int:
+        with self.session() as s:
+            return s.scalar(select(func.count()).select_from(AlertEventRow).where(AlertEventRow.owner == owner, AlertEventRow.read.is_(False))) or 0
+
+    def mark_events_read(self, owner: str, ids: list[int] | None) -> int:
+        with self.session() as s, s.begin():
+            q = update(AlertEventRow).where(AlertEventRow.owner == owner, AlertEventRow.read.is_(False))
+            if ids is not None:
+                q = q.where(AlertEventRow.id.in_(ids))
+            return s.execute(q.values(read=True)).rowcount

@@ -104,3 +104,28 @@ def test_saved_screens_on_postgres(repo):
         repo.delete_screen("bob", sc.id)
     repo.delete_screen("alice", sc.id)
     assert repo.list_screens("alice") == []
+
+
+def test_portfolio_and_alerts_on_postgres(repo):
+    from datetime import date
+    from decimal import Decimal as D
+
+    from app.domain import Alert, NotFoundError, Txn, utcnow
+    from app.services import alerts as al
+    from app.services import portfolio as pf
+
+    p = repo.create_portfolio("alice", "P", Txn(0, 0, date(2026, 3, 2), "deposit", amount=D("1000")))
+    with pytest.raises(pf.PortfolioError):
+        repo.add_txn("alice", p.id, Txn(0, 0, date(2026, 3, 2), "buy", "X", D(100), D(100)), pf.validate_history)
+    repo.add_txn("alice", p.id, Txn(0, 0, date(2026, 3, 2), "buy", "X", D("2.5"), D("100.25"), D("1")), pf.validate_history)
+    led = pf.replay(repo.list_txns("alice", p.id))
+    assert led.positions["X"].quantity == D("2.5") and led.cash == D("748.375")
+    with pytest.raises(NotFoundError):
+        repo.list_txns("bob", p.id)
+
+    a = repo.create_alert("alice", Alert(0, "alice", "X", "price_above", 100.0, None, 1, True, "", date(2026, 3, 2), False))
+    ev = al.Evaluation(events=[{"observed_day": date(2026, 3, 3), "observed_value": 101.0, "message": "m"}],
+                       last_observed_day=date(2026, 3, 3), last_condition=True, fired_in_episode=True, last_fired_day=date(2026, 3, 3))
+    assert repo.record_evaluation(a.id, date(2026, 3, 2), ev, utcnow()) is True
+    assert repo.record_evaluation(a.id, date(2026, 3, 2), ev, utcnow()) is False
+    assert repo.unread_count("alice") == 1 and repo.mark_events_read("alice", None) == 1

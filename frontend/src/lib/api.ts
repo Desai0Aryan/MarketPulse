@@ -1,4 +1,4 @@
-import type { ApiMeta, Bar, MarketOverview, RangeKey, StockRow, Instrument, Quote, PipelineStatus, QualityReport, RunSummary, RunDetail, Watchlist, SearchItem, Technicals, TechParams, ReturnsResponse, ScreenCatalog, ScreenQuery, ScreenResult, SavedScreen, CompareRequest, CompareResult } from "@/types/api";
+import type { ApiMeta, Bar, MarketOverview, RangeKey, StockRow, Instrument, Quote, PipelineStatus, QualityReport, RunSummary, RunDetail, Watchlist, SearchItem, Technicals, TechParams, ReturnsResponse, ScreenCatalog, ScreenQuery, ScreenResult, SavedScreen, CompareRequest, CompareResult, PortfolioListItem, PortfolioDetail, TxnRow, TxnInput, PortfolioPerformance, AlertKindInfo, AlertItem, AlertInput, AlertEventItem, NotificationsResponse } from "@/types/api";
 
 export class ApiError extends Error {
   constructor(
@@ -67,6 +67,22 @@ export async function downloadCsv(path: string, body: unknown, fallbackName: str
 }
 
 export const api = {
+  portfolios: () => get<{ meta: ApiMeta; disclaimer: string; items: PortfolioListItem[] }>("/portfolios"),
+  createPortfolio: (b: { name: string; initial_cash: number; start_day?: string }) => post<{ id: number; name: string }>("/portfolios", b),
+  portfolio: (id: number) => get<PortfolioDetail>(`/portfolios/${id}`),
+  deletePortfolio: (id: number) => request<null>(`/portfolios/${id}`, { method: "DELETE" }),
+  transactions: (id: number) => get<{ items: TxnRow[] }>(`/portfolios/${id}/transactions`),
+  addTransaction: (id: number, t: TxnInput) => post<{ transaction: TxnRow; warnings: string[] }>(`/portfolios/${id}/transactions`, t),
+  deleteTransaction: (id: number, tid: number) => request<null>(`/portfolios/${id}/transactions/${tid}`, { method: "DELETE" }),
+  performance: (id: number, range: string, benchmark: string) => get<PortfolioPerformance>(`/portfolios/${id}/performance?range=${range}&benchmark=${benchmark}`),
+  alertKinds: () => get<{ items: AlertKindInfo[]; max_alerts: number }>("/alerts/kinds"),
+  alerts: () => get<{ items: AlertItem[] }>("/alerts"),
+  createAlert: (b: AlertInput) => post<AlertItem>("/alerts", b),
+  updateAlert: (id: number, b: Partial<AlertInput> & { enabled?: boolean }) => send<AlertItem>("PATCH", `/alerts/${id}`, b),
+  deleteAlert: (id: number) => request<null>(`/alerts/${id}`, { method: "DELETE" }),
+  alertEvents: (limit = 50) => get<{ items: AlertEventItem[] }>(`/alerts/events?limit=${limit}`),
+  notifications: () => get<NotificationsResponse>("/notifications"),
+  markNotificationsRead: (ids: number[] | null) => post<{ marked: number }>("/notifications/read", { ids }),
   screenerFields: () => get<ScreenCatalog>("/screener/fields"),
   screenerQuery: (q: ScreenQuery) => post<ScreenResult>("/screener/query", q),
   savedScreens: () => get<{ items: SavedScreen[] }>("/screener/saved"),

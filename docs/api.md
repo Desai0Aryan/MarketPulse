@@ -32,3 +32,24 @@ Errors: 404 unknown/foreign watchlist or symbol, 409 duplicate name or invalid r
 **Metric definitions.** Computed server-side from stored bars at each instrument's latest session, using only data up to that session. `rel_volume` = latest volume / mean of the prior 30 sessions. `rsi14` = Wilder RSI on adjusted closes. `volatility_20d` = sample std of the last 20 daily returns × √252. 52-week distances use unadjusted highs/lows over 365 calendar days. A metric that cannot be computed is `null` and a filter on it never matches (never treated as 0).
 
 **Compare alignment.** Inner join on trading days present for every selected symbol; nothing is forward-filled. Dropped days per symbol are reported in `coverage`. Correlation is Pearson on daily simple returns of adjusted closes; constant series give `null`, not 0. Rolling correlation at day *t* uses only the trailing window ending at *t*.
+
+## Part 5: Paper portfolio & alerts
+
+### Portfolio (`/api/v1/portfolios`)
+`GET/POST /portfolios`, `GET/DELETE /portfolios/{id}`, `GET/POST /portfolios/{id}/transactions`, `DELETE /portfolios/{id}/transactions/{tid}`, `GET /portfolios/{id}/performance?range=&benchmark=`, `GET /portfolios/{id}/transactions.csv`. Owner-scoped (demo profile); another owner's id returns 404.
+
+**Accounting conventions** (implemented in `app/services/portfolio.py`, pure and unit-tested):
+- Paper money only; every response carries a disclaimer. Decimal arithmetic, floats only at the JSON edge.
+- **Average cost.** A buy adds `qty*price + fee` to the position's cost basis (fees capitalised). A sell removes basis proportionally; realised P&L = `(qty*price - fee) - basis removed`.
+- **No shorting, no margin.** A sale cannot exceed holdings and cash cannot go negative at any point in history. Entries may be back-dated; the entire history is replayed and the write is refused if any point becomes invalid (also applies to deleting an entry). Validation runs inside the repository's lock / DB transaction (`SELECT ... FOR UPDATE` on the portfolio row).
+- Same-day order: deposit, buy, sell, withdraw, then entry id. Future dates (after the latest stored session) are rejected.
+- **Valuation** uses the latest stored close on or before the valuation day. No price => the position is listed as missing, excluded from market value, and totals are flagged `complete: false` (never valued at 0). Prices older than 5 days are flagged stale.
+- **Market value vs cost basis** are separate fields: `positions_market_value`, `invested_capital` (cost basis of open positions), `unrealized_pnl`, `realized_pnl`, `net_deposits`.
+- **Performance** is time-weighted on the benchmark's trading calendar (SPY/QQQ/DIA/IWM proxies); deposits/withdrawals are end-of-day flows excluded from returns; fees reduce returns; dividends are not modelled. Days where a held symbol has no price yet are skipped and reported.
+
+### Alerts (`/api/v1/alerts`, `/api/v1/notifications`)
+`GET /alerts/kinds`, `GET/POST /alerts`, `PATCH/DELETE /alerts/{id}`, `GET /alerts/events`, `POST /alerts/evaluate` (ops-guarded), `GET /notifications`, `POST /notifications/read`.
+- Kinds: price above/below, 1-day % change above/below, RSI(14) above/below, close crossing SMA(n) up/down, volume above N x prior-30-session average.
+- Evaluated only on **stored daily sessions**, oldest first, each session at most once (`last_observed_day`), and automatically after every successful ingestion run. Compare-and-set persistence prevents two evaluators double-firing.
+- **Level kinds are edge-triggered** (fire when false -> true); an alert whose condition is already true when created/resumed/edited does not fire until it clears (`waiting_for_reset`). **Crossing kinds** fire on the crossing session. `cooldown_days` additionally suppresses close re-fires.
+- Each event stores the observed session, observed value and evaluation time; messages state only what that daily record shows. Status is `active`, `triggered` (fired in the current episode) or `paused`. Email is not implemented.

@@ -7,6 +7,7 @@ import { Change } from "@/components/shared/Change";
 import { Badge, Card, CardHeader, EmptyState, ErrorState, ProgressBar, Skeleton } from "@/components/ui/primitives";
 import { ROADMAP, progress } from "@/lib/roadmap";
 import { cn, fmtDay, num, usd } from "@/lib/utils";
+import { useNotifications } from "@/hooks/useNotifications";
 import { useDefaultWatchlist, useWatchlists } from "@/hooks/useWatchlists";
 import type { IndexRow, MarketOverview, MoverRow } from "@/types/api";
 
@@ -189,6 +190,30 @@ export function RoadmapCard() {
           ))}
         </ol>
       </div>
+    </Card>
+  );
+}
+
+export function RecentAlertsCard() {
+  const { data, isError } = useNotifications();
+  return (
+    <Card className="p-4">
+      <CardHeader title="Recent alerts" subtitle="Evaluated on stored daily data" action={<Link href="/alerts" className="text-xs text-accent hover:underline">Manage</Link>} />
+      {isError ? (
+        <p className="text-xs text-muted">Could not load alerts.</p>
+      ) : !data || data.items.length === 0 ? (
+        <p className="text-xs text-muted">No alert has fired yet. Create one from a stock page or the Alerts page.</p>
+      ) : (
+        <ul className="space-y-2.5">
+          {data.items.slice(0, 5).map((n) => (
+            <li key={n.id} className="text-xs">
+              <Link href={`/markets/${n.symbol}`} className="font-semibold hover:text-accent">{n.symbol}</Link>
+              <span className="ml-1.5 text-[10.5px] text-muted">session {n.observed_day}</span>
+              <p className="mt-0.5 text-muted">{n.message}</p>
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }
