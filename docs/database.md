@@ -42,3 +42,7 @@ SELECT instrument_id, max(day) FROM prices GROUP BY instrument_id;
 ## Part 5 tables (migration `0004_portfolio_alerts`)
 
 `portfolios(owner, name)` unique per owner; `portfolio_transactions(portfolio_id, day, kind, symbol, quantity NUMERIC(24,6), price NUMERIC(18,4), fee, amount, note)` with CHECK constraints on kind and non-negative values; `alerts(owner, symbol, kind, threshold, window, cooldown_days, enabled, engine state: last_observed_day, last_condition, fired_in_episode, last_fired_day)`; `alert_events(alert_id, owner, symbol, kind, observed_day, observed_value, threshold, message, evaluated_at, read)`. Events are capped at 500 per owner.
+
+## Part 6 tables (migration `0005_backtests_news`)
+
+`backtest_runs(owner, symbol, strategy, config JSONB, result JSONB)` (200 kept per owner) and `news_articles(dedup_key UNIQUE, provider, headline, source, published_at, url, summary, symbols JSONB [{symbol, relevance}], sentiment_score/category/method/version/at, simulated)`. News is shared (not owner-scoped).

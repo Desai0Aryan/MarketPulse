@@ -3,6 +3,7 @@
 import { Bell, Menu, Moon, Search, Sun } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { useLiveEvents } from "@/hooks/useLiveEvents";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useUI } from "@/stores/ui";
 import { fmtDay } from "@/lib/utils";
@@ -16,6 +17,7 @@ export function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () 
   const [bell, setBell] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
   const notes = useNotifications();
+  const live = useLiveEvents();
   const unread = notes.data?.unread ?? 0;
   const isDark = !hydrated || theme === "dark";
 
@@ -53,6 +55,13 @@ export function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () 
           <Badge tone="warn">Simulated</Badge>
         </div>
 
+        <span
+          title={live === "live" ? "Receiving live updates from the server" : live === "polling" ? "Live stream unavailable; refreshing by polling" : "Connecting to live updates"}
+          className="hidden items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] text-muted sm:inline-flex"
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${live === "live" ? "bg-up" : live === "polling" ? "bg-warn" : "bg-muted animate-pulse"}`} aria-hidden />
+          {live === "live" ? "Live" : live === "polling" ? "Polling" : "Connecting"}
+        </span>
         <div className="relative" ref={bellRef}>
           <button onClick={() => setBell((v) => !v)} aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"} aria-expanded={bell} className={`${btn} relative`}>
             <Bell className="h-4 w-4" />

@@ -15,11 +15,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database.models import (
-    CheckpointRow, IndicatorRow, IngestionRunRow, InstrumentRow, PriceRow, AlertEventRow, AlertRow, PortfolioRow, PortfolioTxnRow, RejectedRecordRow, SavedScreenRow, WatchlistItemRow, WatchlistRow,
+    CheckpointRow, IndicatorRow, IngestionRunRow, InstrumentRow, PriceRow, AlertEventRow, AlertRow, BacktestRunRow, NewsArticleRow, PortfolioRow, PortfolioTxnRow, RejectedRecordRow, SavedScreenRow, WatchlistItemRow, WatchlistRow,
 )
 from app.domain import (
     Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, SavedScreen, UpsertResult, Watchlist, utcnow,
-    Alert, AlertEvent, Portfolio, Txn,
+    Alert, AlertEvent, Article, BacktestRecord, Portfolio, Txn,
 )
 from app.ingestion.providers.base import Bar, Instrument
 
@@ -573,3 +573,79 @@ class SqlRepository:
             if ids is not None:
                 q = q.where(AlertEventRow.id.in_(ids))
             return s.execute(q.values(read=True)).rowcount
+
+    # backtests --------------------------------------------------------
+    MAX_BACKTESTS = 200
+
+    @staticmethod
+    def _bt(r: BacktestRunRow) -> BacktestRecord:
+        return BacktestRecord(r.id, r.owner, r.symbol, r.strategy, r.config, r.result, r.created_at)
+
+    def save_backtest(self, owner: str, symbol: str, strategy: str, config: dict, result: dict) -> BacktestRecord:
+        with self.session() as s, s.begin():
+            row = BacktestRunRow(owner=owner, symbol=symbol, strategy=strategy, config=config, result=result)
+            s.add(row)
+            s.flush()
+            old = s.scalars(select(BacktestRunRow.id).where(BacktestRunRow.owner == owner).order_by(BacktestRunRow.id.desc()).offset(self.MAX_BACKTESTS)).all()
+            if old:
+                s.execute(delete(BacktestRunRow).where(BacktestRunRow.id.in_(old)))
+            s.refresh(row)
+            return self._bt(row)
+
+    def list_backtests(self, owner: str, limit: int = 50) -> list[BacktestRecord]:
+        with self.session() as s:
+            return [self._bt(r) for r in s.scalars(select(BacktestRunRow).where(BacktestRunRow.owner == owner).order_by(BacktestRunRow.id.desc()).limit(limit))]
+
+    def get_backtest(self, owner: str, run_id: int) -> BacktestRecord:
+        with self.session() as s:
+            r = s.scalar(select(BacktestRunRow).where(BacktestRunRow.id == run_id, BacktestRunRow.owner == owner))
+            if r is None:
+                raise NotFoundError("Backtest not found")
+            return self._bt(r)
+
+    def delete_backtest(self, owner: str, run_id: int) -> None:
+        with self.session() as s, s.begin():
+            res = s.execute(delete(BacktestRunRow).where(BacktestRunRow.id == run_id, BacktestRunRow.owner == owner))
+            if res.rowcount == 0:
+                raise NotFoundError("Backtest not found")
+
+    # news -------------------------------------------------------------
+    @staticmethod
+    def _article(r: NewsArticleRow) -> Article:
+        return Article(r.id, r.dedup_key, r.provider, r.headline, r.source, r.published_at, r.url, r.summary, list(r.symbols),
+                       r.sentiment_score, r.sentiment_category, r.sentiment_method, r.sentiment_version, r.sentiment_at, r.simulated)
+
+    def upsert_articles(self, items: list[Article]) -> tuple[int, int]:
+        if not items:
+            return 0, 0
+        rows = [dict(dedup_key=a.dedup_key, provider=a.provider, headline=a.headline, source=a.source, published_at=a.published_at,
+                     url=a.url, summary=a.summary, symbols=a.symbols, sentiment_score=a.sentiment_score,
+                     sentiment_category=a.sentiment_category, sentiment_method=a.sentiment_method, sentiment_version=a.sentiment_version,
+                     sentiment_at=a.sentiment_at, simulated=a.simulated) for a in items]
+        with self.session() as s, s.begin():
+            stmt = pg_insert(NewsArticleRow).values(rows).on_conflict_do_nothing(index_elements=["dedup_key"]).returning(NewsArticleRow.id)
+            inserted = len(s.execute(stmt).all())
+        return inserted, len(items) - inserted
+
+    def list_articles(self, symbol=None, source=None, start=None, end=None, min_relevance=0.0, sentiment=None, limit=50, offset=0):
+        with self.session() as s:
+            q = select(NewsArticleRow)
+            if source:
+                q = q.where(NewsArticleRow.source == source)
+            if start:
+                q = q.where(NewsArticleRow.published_at >= start)
+            if end:
+                q = q.where(NewsArticleRow.published_at <= end)
+            if sentiment:
+                q = q.where(NewsArticleRow.sentiment_category == sentiment)
+            if symbol:
+                q = q.where(NewsArticleRow.symbols.contains([{"symbol": symbol}]))  # JSONB @> containment
+            rows = [self._article(r) for r in s.scalars(q.order_by(NewsArticleRow.published_at.desc(), NewsArticleRow.id.desc()).limit(5000))]
+        if symbol:
+            rows = [a for a in rows if (a.relevance(symbol) or 0) >= min_relevance]  # per-symbol relevance lives inside the JSON
+        return rows[offset : offset + limit], len(rows)
+
+    def list_sources(self) -> list[tuple[str, int]]:
+        with self.session() as s:
+            q = select(NewsArticleRow.source, func.count()).group_by(NewsArticleRow.source).order_by(func.count().desc(), NewsArticleRow.source)
+            return [(r[0], r[1]) for r in s.execute(q).all()]

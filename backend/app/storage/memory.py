@@ -5,11 +5,11 @@ import dataclasses
 import threading
 from bisect import bisect_left
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 
 from app.domain import (
     Checkpoint, ConflictError, LimitError, NotFoundError, Rejection, RunRecord, SavedScreen, UpsertResult, Watchlist, utcnow,
-    Alert, AlertEvent, Portfolio, Txn,
+    Alert, AlertEvent, Article, BacktestRecord, Portfolio, Txn,
 )
 from app.ingestion.providers.base import Bar, Instrument
 
@@ -40,6 +40,10 @@ class MemoryRepository:
         self._events: list[AlertEvent] = []
         self._next_alert = 1
         self._next_event = 1
+        self._bt: dict[int, BacktestRecord] = {}
+        self._next_bt = 1
+        self._articles: dict[str, Article] = {}
+        self._next_article = 1
 
     def ping(self) -> bool:
         return True
@@ -415,3 +419,70 @@ class MemoryRepository:
                     e.read = True
                     n += 1
             return n
+
+    # backtests --------------------------------------------------------
+    MAX_BACKTESTS = 200
+
+    def save_backtest(self, owner: str, symbol: str, strategy: str, config: dict, result: dict) -> BacktestRecord:
+        with self._lock:
+            mine = sorted((r for r in self._bt.values() if r.owner == owner), key=lambda r: r.id)
+            if len(mine) >= self.MAX_BACKTESTS:  # bounded history: drop the oldest
+                del self._bt[mine[0].id]
+            rec = BacktestRecord(self._next_bt, owner, symbol, strategy, copy.deepcopy(config), copy.deepcopy(result), utcnow())
+            self._next_bt += 1
+            self._bt[rec.id] = rec
+            return rec
+
+    def list_backtests(self, owner: str, limit: int = 50) -> list[BacktestRecord]:
+        with self._lock:
+            return sorted((r for r in self._bt.values() if r.owner == owner), key=lambda r: r.id, reverse=True)[:limit]
+
+    def get_backtest(self, owner: str, run_id: int) -> BacktestRecord:
+        with self._lock:
+            r = self._bt.get(run_id)
+            if r is None or r.owner != owner:
+                raise NotFoundError("Backtest not found")
+            return r
+
+    def delete_backtest(self, owner: str, run_id: int) -> None:
+        with self._lock:
+            self.get_backtest(owner, run_id)
+            del self._bt[run_id]
+
+    # news -------------------------------------------------------------
+    def upsert_articles(self, items: list[Article]) -> tuple[int, int]:
+        inserted = dups = 0
+        with self._lock:
+            for a in items:
+                if a.dedup_key in self._articles:
+                    dups += 1
+                    continue
+                self._articles[a.dedup_key] = dataclasses.replace(a, id=self._next_article)
+                self._next_article += 1
+                inserted += 1
+        return inserted, dups
+
+    def list_articles(self, symbol=None, source=None, start=None, end=None, min_relevance=0.0, sentiment=None, limit=50, offset=0):
+        with self._lock:
+            rows = []
+            for a in self._articles.values():
+                if source and a.source != source:
+                    continue
+                if start and a.published_at < start or end and a.published_at > end:
+                    continue
+                if sentiment and a.sentiment_category != sentiment:
+                    continue
+                if symbol:
+                    rel = a.relevance(symbol)
+                    if rel is None or rel < min_relevance:
+                        continue
+                rows.append(a)
+            rows.sort(key=lambda a: (a.published_at, a.id), reverse=True)
+            return [dataclasses.replace(a) for a in rows[offset : offset + limit]], len(rows)
+
+    def list_sources(self) -> list[tuple[str, int]]:
+        with self._lock:
+            counts: dict[str, int] = defaultdict(int)
+            for a in self._articles.values():
+                counts[a.source] += 1
+            return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))

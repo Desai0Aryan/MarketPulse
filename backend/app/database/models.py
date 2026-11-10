@@ -193,3 +193,35 @@ class AlertEventRow(Base):
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     __table_args__ = (Index("ix_alert_events_owner", "owner", "id"), Index("ix_alert_events_alert", "alert_id"))
+
+
+class BacktestRunRow(Base):
+    __tablename__ = "backtest_runs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    strategy: Mapped[str] = mapped_column(String(24), nullable=False)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    result: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (Index("ix_backtest_runs_owner", "owner", "id"),)
+
+
+class NewsArticleRow(Base):
+    __tablename__ = "news_articles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dedup_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    headline: Mapped[str] = mapped_column(String(300), nullable=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    url: Mapped[str | None] = mapped_column(String(1000))
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    symbols: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    sentiment_score: Mapped[float | None] = mapped_column(Float)
+    sentiment_category: Mapped[str | None] = mapped_column(String(10))
+    sentiment_method: Mapped[str | None] = mapped_column(String(40))
+    sentiment_version: Mapped[str | None] = mapped_column(String(20))
+    sentiment_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    simulated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    __table_args__ = (Index("ix_news_published", "published_at"), Index("ix_news_source", "source"))

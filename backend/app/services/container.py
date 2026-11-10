@@ -32,10 +32,18 @@ def get_repo() -> Repository:
 
 @lru_cache
 def get_ingestion() -> IngestionService:
-    from app.services import alerts  # local import: keeps the container import graph acyclic
+    from app.services import alerts, events  # local import: keeps the container import graph acyclic
 
     repo = get_repo()
-    return IngestionService(get_provider(), repo, after_run=lambda _run: alerts.evaluate_all(repo))
+
+    def after_run(run) -> None:
+        bus = events.get_bus()
+        bus.publish("ingestion", {"run_id": run.id, "status": run.status})
+        res = alerts.evaluate_all(repo)
+        if res["events_created"]:
+            bus.publish("alert", {"new_events": res["events_created"]})
+
+    return IngestionService(get_provider(), repo, after_run=after_run)
 
 
 def reset_for_tests() -> None:

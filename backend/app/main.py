@@ -9,10 +9,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import alerts, compare, market, pipeline, portfolios, screener, search, stocks, watchlists
+from app.api.v1 import ai, alerts, backtests, compare, live, market, news, pipeline, portfolios, screener, search, stocks, watchlists
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services import container
+from app.services import news as nw
 from app.services.watchlists import ensure_default
 
 log = logging.getLogger("marketpulse")
@@ -29,6 +30,12 @@ async def lifespan(_: FastAPI):
             run = container.get_ingestion().run("backfill", trigger="startup")
             log.info("demo seed finished", extra={"path": f"run={run.id} status={run.status}"})
     ensure_default(container.get_repo())
+    try:  # news is optional: a missing file or provider must never stop the API from starting
+        provider = news.make_provider() if s.news_provider != "off" else None
+        if provider is not None:
+            log.info("news refreshed", extra={"path": str(nw.refresh(container.get_repo(), provider))[:200]})
+    except Exception:  # noqa: BLE001
+        log.exception("news refresh failed at startup")
     yield
     log.info("shutdown complete")
 
@@ -78,6 +85,8 @@ def create_app() -> FastAPI:
     app.include_router(compare.router, prefix="/api/v1")
     app.include_router(portfolios.router, prefix="/api/v1")
     app.include_router(alerts.router, prefix="/api/v1")
+    for r in (backtests.router, news.router, ai.router, live.router):
+        app.include_router(r, prefix="/api/v1")
     return app
 
 

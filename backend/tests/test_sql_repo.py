@@ -129,3 +129,20 @@ def test_portfolio_and_alerts_on_postgres(repo):
     assert repo.record_evaluation(a.id, date(2026, 3, 2), ev, utcnow()) is True
     assert repo.record_evaluation(a.id, date(2026, 3, 2), ev, utcnow()) is False
     assert repo.unread_count("alice") == 1 and repo.mark_events_read("alice", None) == 1
+
+
+def test_backtests_and_news_on_postgres(repo):
+    from datetime import UTC, datetime
+
+    from app.domain import Article, NotFoundError
+
+    rec = repo.save_backtest("alice", "X", "ma_cross", {"a": 1}, {"metrics": {"total_return": 0.1}})
+    assert repo.get_backtest("alice", rec.id).result["metrics"]["total_return"] == 0.1
+    with pytest.raises(NotFoundError):
+        repo.get_backtest("bob", rec.id)
+    now = datetime(2026, 10, 23, 21, tzinfo=UTC)
+    a = Article(0, "k1", "file", "NVDA beats estimates", "Wire", now, None, "", [{"symbol": "NVDA", "relevance": 1.0}], 0.5, "positive", "lexicon-baseline", "1", now)
+    assert repo.upsert_articles([a, a]) == (1, 1) or repo.upsert_articles([a]) == (0, 1)
+    items, total = repo.list_articles(symbol="NVDA", min_relevance=0.7)
+    assert total == 1 and items[0].sentiment_category == "positive"
+    assert repo.list_articles(symbol="AMD")[1] == 0

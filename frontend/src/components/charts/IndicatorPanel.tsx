@@ -26,9 +26,11 @@ interface Props {
   onHover: (i: number | null) => void;
   format?: (v: number) => string;
   note?: string;
+  /** Trade markers drawn on the first series: filled up-triangle = buy, hollow down-triangle = sell (shape, not just colour). */
+  markers?: { day: string; side: "buy" | "sell" }[];
 }
 
-export function IndicatorPanel({ title, days, series, hist, area, guides = [], domain, height = 120, hover, onHover, format = (v) => v.toFixed(2), note }: Props) {
+export function IndicatorPanel({ title, days, series, hist, area, guides = [], domain, height = 120, hover, onHover, format = (v) => v.toFixed(2), note, markers }: Props) {
   const { ref, width } = useWidth();
   const n = days.length;
   const plotW = width - M.left - M.right;
@@ -118,6 +120,15 @@ export function IndicatorPanel({ title, days, series, hist, area, guides = [], d
             {format(t)}
           </text>
         ))}
+        {markers?.map((m, k) => {
+          const i = days.indexOf(m.day);
+          const v = i >= 0 ? series[0]?.values[i] : null;
+          if (i < 0 || v === null || v === undefined) return null;
+          const cx = x(i), cy = y(v);
+          return m.side === "buy"
+            ? <path key={`${m.day}-${k}`} d={`M${cx},${cy - 9} l5,9 h-10 z`} fill="rgb(var(--up))" stroke="rgb(var(--bg))" strokeWidth="1"><title>{`Buy ${m.day}`}</title></path>
+            : <path key={`${m.day}-${k}`} d={`M${cx},${cy + 9} l5,-9 h-10 z`} fill="rgb(var(--bg))" stroke="rgb(var(--down))" strokeWidth="1.5"><title>{`Sell ${m.day}`}</title></path>;
+        })}
         {hover !== null && hover < n && <line x1={x(hover)} x2={x(hover)} y1={top} y2={height - 6} stroke="rgb(var(--fg))" strokeOpacity="0.35" strokeDasharray="3 3" pointerEvents="none" />}
       </svg>
       {note && <p className="px-2 text-[10.5px] text-muted">{note}</p>}

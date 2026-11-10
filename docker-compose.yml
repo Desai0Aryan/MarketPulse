@@ -24,6 +24,10 @@ services:
       MP_DATABASE_URL: postgresql+psycopg://marketpulse:${POSTGRES_PASSWORD:-marketpulse}@db:5432/marketpulse
       MP_CORS_ORIGINS: '["http://localhost:3000"]'
       MP_ADMIN_TOKEN: ${MP_ADMIN_TOKEN:-}
+      MP_NEWS_PROVIDER: ${MP_NEWS_PROVIDER:-sample}
+      MP_NEWS_FILE: ${MP_NEWS_FILE:-}
+      MP_LLM_API_KEY: ${MP_LLM_API_KEY:-}
+      MP_LLM_MODEL: ${MP_LLM_MODEL:-claude-sonnet-5-5}
     depends_on:
       db:
         condition: service_healthy

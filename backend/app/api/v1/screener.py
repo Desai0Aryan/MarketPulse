@@ -36,13 +36,7 @@ class SaveBody(BaseModel):
 
 
 def _rows() -> list[dict]:
-    repo = container.get_repo()
-    rows = []
-    for inst in repo.get_instruments():
-        m = screener.compute_metrics(inst, repo.get_bars(inst.symbol))
-        if m:
-            rows.append(m)
-    return rows
+    return screener.universe_rows(container.get_repo())
 
 
 def _run(body: ScreenBody, **override) -> dict:

@@ -266,3 +266,36 @@ export interface AlertItem {
 export interface AlertInput { symbol: string; kind: string; threshold: number; window?: number | null; cooldown_days: number; note?: string }
 export interface AlertEventItem { id: number; alert_id: number; symbol: string; kind: string; observed_day: string; observed_value: number; threshold: number; message: string; evaluated_at: string; read: boolean }
 export interface NotificationsResponse { unread: number; items: AlertEventItem[] }
+
+// ---- Part 6: backtests, news, AI, live ----
+export interface StrategyInfo { key: string; label: string; params: Record<string, number> }
+export interface BacktestRequest {
+  symbol: string; strategy: string; params: Record<string, number>; start?: string | null; end?: string | null; initial_capital: number;
+  commission_bps: number; slippage_bps: number; sizing: "full" | "fraction"; fraction: number; long_only: boolean; risk_free_pct: number; save: boolean;
+}
+export interface BacktestTrade { entry_day: string; entry_price: number; exit_day: string | null; exit_price: number; qty: number; pnl: number; return_pct: number; costs: number; bars_held: number; open: boolean }
+export interface BacktestResult {
+  id?: number; meta?: ApiMeta; disclaimer: string; days: string[]; equity: Nums; buy_hold: Nums; drawdown: Nums;
+  markers: { day: string; side: "buy" | "sell"; price: number }[]; trades: BacktestTrade[];
+  metrics: { total_return: number | null; annualized_return: number | null; annualized_volatility: number | null; sharpe: number | null; max_drawdown: number | null; exposure: number | null; completed_trades: number; win_rate: number | null; notes: string[] };
+  buy_hold_metrics: { total_return: number | null; max_drawdown: number | null }; benchmark_return?: number | null; final_equity: number; warnings: string[];
+  config: Record<string, unknown> & { symbol: string; strategy: string; strategy_version: string; params: Record<string, number>; start: string; end: string; initial_capital: number };
+  reproducibility: { strategy_version: string; sessions: number; data_range: string[]; data_fingerprint: string; assumptions: string[] }; execution_ms: number;
+}
+export interface BacktestSummary { id: number; symbol: string; strategy: string; created_at: string; config: BacktestResult["config"]; total_return: number | null; max_drawdown: number | null; completed_trades: number | null; buy_hold_return: number | null }
+
+export interface NewsArticle {
+  id: number; headline: string; source: string; provider: string; published_at: string; url: string | null; summary: string; simulated: boolean;
+  symbols: { symbol: string; relevance: number }[];
+  sentiment: { score: number; category: "positive" | "neutral" | "negative"; method: string; version: string; analysed_at: string | null } | null;
+}
+export interface NewsResponse { provider: string; simulated: boolean; total: number; items: NewsArticle[]; sentiment_notice: string; sentiment_method: string; attribution: string; notice: string | null }
+export interface NewsFilters { symbol?: string; source?: string; start?: string; end?: string; min_relevance?: number; sentiment?: string; limit?: number; offset?: number }
+
+export interface AiSource { type: string; label: string; href: string; as_of: string | null }
+export interface AiAnswer {
+  question: string; intent: string; symbols: string[]; range: { sessions_requested: number; as_of: string | null }; facts: string[];
+  explanation: string | null; explanation_mode: "deterministic" | "model-generated"; llm_error: string | null; sources: AiSource[];
+  tools: { tool: string; args: Record<string, unknown>; ok: boolean; error?: string }[]; caveats: string[]; refused: boolean; generated_at: string;
+}
+export interface AiStatus { mode: string; llm_enabled: boolean; suggested: string[]; notice: string; tools: string[] }

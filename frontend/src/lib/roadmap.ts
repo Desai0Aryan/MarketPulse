@@ -12,7 +12,7 @@ export const ROADMAP: RoadmapPart[] = [
   { id: 3, title: "Stock terminal", summary: "Candlesticks, technicals, search, persistent watchlists", done: true },
   { id: 4, title: "Screener & compare", summary: "Filters, correlation matrix, CSV export", done: true },
   { id: 5, title: "Portfolio & alerts", summary: "Paper trading accounting, alert engine", done: true },
-  { id: 6, title: "Backtests, news, AI", summary: "Strategy lab, sentiment, grounded research copilot, SSE", done: false },
+  { id: 6, title: "Backtests, news, AI", summary: "Strategy lab, sentiment, grounded research copilot, SSE", done: true },
   { id: 7, title: "Quality & docs", summary: "Tests, CI, benchmarks, README, polish", done: false },
 ];
 

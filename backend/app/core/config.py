@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     admin_token: str | None = None
     ingest_interval_minutes: int = 60  # worker schedule
 
+    # News. "sample" = labelled demo feed built from stored prices; "file" = real articles you supply as JSON Lines
+    # (MP_NEWS_FILE); "off" disables ingestion.
+    news_provider: str = "sample"
+    news_file: str | None = None
+
+    # Optional LLM for the research copilot's *explanations only*. Facts always come from deterministic tools, and the
+    # copilot works fully without a key. The key is never returned by any endpoint.
+    llm_api_key: str | None = None
+    llm_model: str = "claude-sonnet-5-5"
+
     @property
     def is_demo(self) -> bool:
         return self.data_provider == "mock"

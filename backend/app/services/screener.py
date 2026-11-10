@@ -201,3 +201,13 @@ def run_screen(
         "items": ordered[start : start + page_size],
         "all_symbols": [r["symbol"] for r in ordered],
     }
+
+
+def universe_rows(repo) -> list[dict]:
+    """Metrics for every instrument that has stored data (shared by the API and the research copilot)."""
+    rows = []
+    for inst in repo.get_instruments():
+        m = compute_metrics(inst, repo.get_bars(inst.symbol))
+        if m:
+            rows.append(m)
+    return rows

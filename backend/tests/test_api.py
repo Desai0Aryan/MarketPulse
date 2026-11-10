@@ -282,3 +282,47 @@ def test_alert_fires_after_new_session_ingested(client):
     assert client.post("/api/v1/notifications/read", json={"ids": None}).json()["marked"] == 1
     assert client.get("/api/v1/notifications").json()["unread"] == 0
     assert client.get("/api/v1/alerts").json()["items"][0]["status"] == "triggered" and aid
+
+
+# ---- Part 6: backtests, news, AI, live events (skipped unless FastAPI is installed) ----
+def test_backtest_run_persist_and_validation(client):
+    body = {"symbol": "msft", "strategy": "ma_cross", "params": {"fast": 20, "slow": 50}, "commission_bps": 5, "slippage_bps": 5}
+    r = client.post("/api/v1/backtests", json=body)
+    assert r.status_code == 200
+    j = r.json()
+    assert j["config"]["symbol"] == "MSFT" and j["reproducibility"]["strategy_version"] and j["disclaimer"].startswith("Historical simulation")
+    assert len(j["equity"]) == len(j["days"]) == len(j["buy_hold"])
+    got = client.get(f"/api/v1/backtests/{j['id']}").json()
+    assert got["metrics"] == j["metrics"] and any(i["id"] == j["id"] for i in client.get("/api/v1/backtests").json()["items"])
+    assert client.post("/api/v1/backtests", json={**body, "params": {"fast": 50, "slow": 20}}).status_code == 422
+    assert client.post("/api/v1/backtests", json={**body, "long_only": False}).status_code == 422
+    assert client.post("/api/v1/backtests", json={**body, "symbol": "NOPE"}).status_code == 404
+    assert client.post("/api/v1/backtests", json={**body, "strategy": "magic"}).status_code == 422
+    assert client.delete(f"/api/v1/backtests/{j['id']}").status_code == 204
+    assert client.get(f"/api/v1/backtests/{j['id']}").status_code == 404
+
+
+def test_news_endpoints_label_demo_feed(client):
+    r = client.get("/api/v1/news?limit=5").json()
+    assert r["simulated"] is True and "not real news" in r["notice"] and "not a reliable predictor" in r["sentiment_notice"]
+    assert all(a["simulated"] and a["sentiment"]["method"] == "lexicon-baseline" for a in r["items"])
+    assert client.get("/api/v1/news?start=2026-12-01&end=2026-01-01").status_code == 422
+    assert client.get("/api/v1/news?sentiment=great").status_code == 422
+    assert client.get("/api/v1/news/sources").json()["items"]
+    assert client.post("/api/v1/news/refresh").json()["inserted"] == 0  # idempotent
+
+
+def test_ai_chat_grounded_and_refuses_advice(client):
+    st = client.get("/api/v1/ai/status").json()
+    assert st["mode"] == "deterministic" and st["suggested"]
+    a = client.post("/api/v1/ai/chat", json={"question": "Compare NVDA and AMD over the last 90 trading days"}).json()
+    assert a["intent"] == "compare" and a["facts"] and a["sources"] and "key" not in str(a).lower().replace("keyboard", "")
+    assert client.post("/api/v1/ai/chat", json={"question": "Should I buy NVDA?"}).json()["refused"] is True
+    assert client.post("/api/v1/ai/chat", json={"question": ""}).status_code == 422
+    assert client.post("/api/v1/ai/chat", json={"question": "x" * 600}).status_code == 422
+    s = client.post("/api/v1/ai/chat/stream", json={"question": "Show AAPL"})
+    assert s.headers["content-type"].startswith("text/event-stream") and "event: done" in s.text and "event: meta" in s.text
+
+
+def test_events_stream_route_registered(client):
+    assert any(getattr(r, "path", "") == "/api/v1/events" for r in client.app.routes)  # streaming itself is covered at the generator level

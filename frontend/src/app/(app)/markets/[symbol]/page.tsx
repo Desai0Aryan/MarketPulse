@@ -9,6 +9,7 @@ import { FavoriteStar } from "@/components/dashboard/Panels";
 import { PriceSection } from "@/components/dashboard/MarketChartCard";
 import { ReturnsTab } from "@/components/markets/ReturnsTab";
 import { TechnicalsTab } from "@/components/markets/TechnicalsTab";
+import { NewsList } from "@/components/news/NewsList";
 import { Change } from "@/components/shared/Change";
 import { DataBadge, DemoBanner } from "@/components/shared/DataBadge";
 import { Badge, Card, CardHeader, EmptyState, ErrorState, Skeleton } from "@/components/ui/primitives";
@@ -18,7 +19,7 @@ import { api, ApiError } from "@/lib/api";
 import { cn, compact, fmtDay, num, usd } from "@/lib/utils";
 import { useUI } from "@/stores/ui";
 
-const TABS = ["Overview", "Technicals", "Returns", "Data quality", "News & financials"] as const;
+const TABS = ["Overview", "Technicals", "Returns", "Data quality", "News"] as const;
 type Tab = (typeof TABS)[number];
 
 function AddToWatchlist({ symbol }: { symbol: string }) {
@@ -262,15 +263,24 @@ export default function SymbolPage() {
           </Card>
         )}
 
-        {tab === "News & financials" && (
-          <Card className="max-w-2xl">
-            <EmptyState
-              title="Not available in this build"
-              hint="The demo provider supplies prices only: no company financials, and no news. Headlines with sentiment arrive in Part 6; statements appear only when a licensed provider is configured."
-            />
-          </Card>
-        )}
+        {tab === "News" && <SymbolNews symbol={symbol} />}
       </div>
     </>
+  );
+}
+
+function SymbolNews({ symbol }: { symbol: string }) {
+  const q = useQuery({ queryKey: ["news", "symbol", symbol], queryFn: () => api.news({ symbol, min_relevance: 0.4, limit: 15 }), retry: false });
+  return (
+    <Card>
+      <div className="border-b border-border p-4 text-xs text-muted">
+        {q.data?.notice ?? "Headlines mentioning this stock."} {q.data?.sentiment_notice} Company financial statements are not available from the demo provider.
+      </div>
+      {q.isError ? <div className="p-4"><ErrorState message={(q.error as Error).message} onRetry={() => q.refetch()} /></div>
+        : !q.data ? <Skeleton className="m-4 h-40" />
+        : q.data.items.length === 0 ? <div className="p-6"><EmptyState title={`No stored news for ${symbol}`} hint="Nothing has been ingested for this symbol." /></div>
+        : <NewsList items={q.data.items} focusSymbol={symbol} />}
+      <div className="border-t border-border px-4 py-3 text-xs"><Link href={`/news?symbol=${symbol}`} className="text-accent hover:underline">Open all news filters →</Link></div>
+    </Card>
   );
 }

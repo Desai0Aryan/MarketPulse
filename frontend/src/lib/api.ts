@@ -1,4 +1,4 @@
-import type { ApiMeta, Bar, MarketOverview, RangeKey, StockRow, Instrument, Quote, PipelineStatus, QualityReport, RunSummary, RunDetail, Watchlist, SearchItem, Technicals, TechParams, ReturnsResponse, ScreenCatalog, ScreenQuery, ScreenResult, SavedScreen, CompareRequest, CompareResult, PortfolioListItem, PortfolioDetail, TxnRow, TxnInput, PortfolioPerformance, AlertKindInfo, AlertItem, AlertInput, AlertEventItem, NotificationsResponse } from "@/types/api";
+import type { ApiMeta, Bar, MarketOverview, RangeKey, StockRow, Instrument, Quote, PipelineStatus, QualityReport, RunSummary, RunDetail, Watchlist, SearchItem, Technicals, TechParams, ReturnsResponse, ScreenCatalog, ScreenQuery, ScreenResult, SavedScreen, CompareRequest, CompareResult, PortfolioListItem, PortfolioDetail, TxnRow, TxnInput, PortfolioPerformance, AlertKindInfo, AlertItem, AlertInput, AlertEventItem, NotificationsResponse, StrategyInfo, BacktestRequest, BacktestResult, BacktestSummary, NewsResponse, NewsFilters, AiAnswer, AiStatus } from "@/types/api";
 
 export class ApiError extends Error {
   constructor(
@@ -66,7 +66,64 @@ export async function downloadCsv(path: string, body: unknown, fallbackName: str
   URL.revokeObjectURL(url);
 }
 
+export interface StreamHandlers {
+  onMeta?: (m: Pick<AiAnswer, "intent" | "symbols" | "range" | "tools" | "refused">) => void;
+  onFact?: (f: string) => void;
+  onExplanation?: (e: { text: string; mode: AiAnswer["explanation_mode"]; llm_error: string | null }) => void;
+  onSources?: (s: { sources: AiAnswer["sources"]; caveats: string[] }) => void;
+}
+
+/** Reads the /ai/chat/stream SSE response (POST, so EventSource can't be used). Throws ApiError on HTTP errors. */
+export async function streamChat(question: string, h: StreamHandlers, signal?: AbortSignal): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch("/api/v1/ai/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }), signal });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") throw e;
+    throw new ApiError("Cannot reach the MarketPulse API. Is the backend running?", 0);
+  }
+  if (!res.ok || !res.body) {
+    let detail = res.statusText;
+    try { detail = ((await res.json()) as { detail?: string }).detail ?? detail; } catch { /* ignore */ }
+    throw new ApiError(detail, res.status);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const ev = /^event: (.+)$/m.exec(frame)?.[1];
+      const raw = /^data: (.+)$/m.exec(frame)?.[1];
+      if (!ev || raw === undefined) continue;
+      const data = JSON.parse(raw);
+      if (ev === "meta") h.onMeta?.(data);
+      else if (ev === "fact") h.onFact?.(data);
+      else if (ev === "explanation") h.onExplanation?.(data);
+      else if (ev === "sources") h.onSources?.(data);
+    }
+  }
+}
+
 export const api = {
+  strategies: () => get<{ items: StrategyInfo[]; version: string; disclaimer: string }>("/backtests/strategies"),
+  runBacktest: (b: BacktestRequest) => post<BacktestResult>("/backtests", b),
+  backtests: () => get<{ items: BacktestSummary[] }>("/backtests"),
+  backtest: (id: number) => get<BacktestResult>(`/backtests/${id}`),
+  deleteBacktest: (id: number) => request<null>(`/backtests/${id}`, { method: "DELETE" }),
+  news: (f: NewsFilters) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== "" && v !== null) q.set(k, String(v));
+    return get<NewsResponse>(`/news?${q.toString()}`);
+  },
+  newsSources: () => get<{ items: { source: string; count: number }[] }>("/news/sources"),
+  aiStatus: () => get<AiStatus>("/ai/status"),
+  aiChat: (question: string) => post<AiAnswer>("/ai/chat", { question }),
   portfolios: () => get<{ meta: ApiMeta; disclaimer: string; items: PortfolioListItem[] }>("/portfolios"),
   createPortfolio: (b: { name: string; initial_cash: number; start_day?: string }) => post<{ id: number; name: string }>("/portfolios", b),
   portfolio: (id: number) => get<PortfolioDetail>(`/portfolios/${id}`),
